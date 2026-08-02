@@ -40,11 +40,14 @@ class ReservationServiceIntegrationTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17");
 
-    @Autowired
-    private ResourceService resourceService;
+    private final ResourceService resourceService;
+    private final ReservationService reservationService;
 
     @Autowired
-    private ReservationService reservationService;
+    ReservationServiceIntegrationTest(ResourceService resourceService, ReservationService reservationService) {
+        this.resourceService = resourceService;
+        this.reservationService = reservationService;
+    }
 
     @Test
     void create_overlappingReservation_throwsConflict() {
