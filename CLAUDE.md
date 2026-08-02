@@ -27,11 +27,16 @@ Not a git repo yet.
   config with `annotationProcessorPaths` → lombok. If a new module is added and gets the
   same "cannot find symbol: getX/setX/builder()" errors, apply the same fix there (or
   move the compiler-plugin config up to the parent's `pluginManagement`).
-- **`testcontainers.version` in root `pom.xml` is pinned to `2.0.5`**, which does not
-  exist on Maven Central (real Testcontainers releases are on the `1.20.x` line as of
-  this writing). This breaks test-scope dependency resolution
-  (`org.testcontainers:junit-jupiter:jar:2.0.5`, `org.testcontainers:postgresql:jar:2.0.5`
-  not found). Needs correcting to a real released version — in progress.
+- **Testcontainers 2.x renamed its module artifact IDs.** `org.testcontainers:junit-jupiter`
+  and `org.testcontainers:postgresql` (the 1.x names) don't exist in `testcontainers-bom`
+  2.x — they're `testcontainers-junit-jupiter` / `testcontainers-postgresql` now. Fixed in
+  `booking-service/pom.xml` by switching to the renamed artifact IDs and dropping the
+  redundant `testcontainers.version` property/explicit versions (Spring Boot 4.0.1's own
+  BOM already manages `testcontainers-bom` transitively). **Not yet verified end-to-end**:
+  Docker Desktop's WSL integration was off for this distro, so the actual `@Testcontainers`
+  integration test hasn't been run — only compile + dependency resolution. Re-run
+  `mvn -pl booking-service test` once Docker is reachable from this shell (`docker info`
+  should succeed) to confirm.
 - Session/terminal history for this project has been lost before mid-session. This file
   plus git commits (once initialized) are the durable record — prefer committing working
   states over relying on conversation recovery.
