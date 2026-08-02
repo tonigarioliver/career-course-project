@@ -37,16 +37,17 @@ Not a git repo yet.
   `ReservationServiceIntegrationTest` against a real Testcontainers Postgres — 2/2 pass.
 - **`ConversionService` is only auto-registered in a web context.** `ResourceService`/
   `ReservationService` inject `ConversionService` to run the `@Component Converter<...>`
-  beans; that bean only exists because `WebMvcAutoConfiguration` creates one
-  (`mvcConversionService`) when the app boots as a servlet web app. A `@SpringBootTest`
-  with `webEnvironment = NONE` skips that autoconfiguration, so no `ConversionService`
-  bean exists and context loading fails with `NoSuchBeanDefinitionException`. Fixed by
-  switching `ReservationServiceIntegrationTest` to
-  `webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT` instead of defining an
-  explicit `ConversionService` `@Bean` — keeps the test closer to how the app actually
-  runs in production. If a future non-web test needs `ResourceService`/
-  `ReservationService`, it'll hit the same issue and needs the same fix (or a real
-  `@Bean ConversionService`, if a non-web test context becomes unavoidable).
+  beans; that bean only exists in production because `WebMvcAutoConfiguration` creates
+  one (`mvcConversionService`) when the app boots as a servlet web app. A
+  `@SpringBootTest` with `webEnvironment = NONE` skips that autoconfiguration, so no
+  `ConversionService` bean exists and context loading fails with
+  `NoSuchBeanDefinitionException`. Fixed by adding a nested `@TestConfiguration` in
+  `ReservationServiceIntegrationTest` that builds a `DefaultConversionService` and
+  registers all `Converter<?, ?>` beans into it (same pattern used in the
+  `app-mvn-alpha-operating-costs-api` project's service tests) — keeps the test on
+  `WebEnvironment.NONE` instead of paying for a full servlet context just to get a
+  `ConversionService`. Any future non-web test that needs `ResourceService`/
+  `ReservationService` will hit the same gap and needs the same `@TestConfiguration`.
 - Session/terminal history for this project has been lost before mid-session. This file
   plus git commits (once initialized) are the durable record — prefer committing working
   states over relying on conversation recovery.
