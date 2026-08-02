@@ -32,11 +32,21 @@ Not a git repo yet.
   2.x — they're `testcontainers-junit-jupiter` / `testcontainers-postgresql` now. Fixed in
   `booking-service/pom.xml` by switching to the renamed artifact IDs and dropping the
   redundant `testcontainers.version` property/explicit versions (Spring Boot 4.0.1's own
-  BOM already manages `testcontainers-bom` transitively). **Not yet verified end-to-end**:
-  Docker Desktop's WSL integration was off for this distro, so the actual `@Testcontainers`
-  integration test hasn't been run — only compile + dependency resolution. Re-run
-  `mvn -pl booking-service test` once Docker is reachable from this shell (`docker info`
-  should succeed) to confirm.
+  BOM already manages `testcontainers-bom` transitively). **Verified end-to-end**: with
+  Docker Desktop's WSL integration on, `mvn -pl booking-service test` runs
+  `ReservationServiceIntegrationTest` against a real Testcontainers Postgres — 2/2 pass.
+- **`ConversionService` is only auto-registered in a web context.** `ResourceService`/
+  `ReservationService` inject `ConversionService` to run the `@Component Converter<...>`
+  beans; that bean only exists because `WebMvcAutoConfiguration` creates one
+  (`mvcConversionService`) when the app boots as a servlet web app. A `@SpringBootTest`
+  with `webEnvironment = NONE` skips that autoconfiguration, so no `ConversionService`
+  bean exists and context loading fails with `NoSuchBeanDefinitionException`. Fixed by
+  switching `ReservationServiceIntegrationTest` to
+  `webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT` instead of defining an
+  explicit `ConversionService` `@Bean` — keeps the test closer to how the app actually
+  runs in production. If a future non-web test needs `ResourceService`/
+  `ReservationService`, it'll hit the same issue and needs the same fix (or a real
+  `@Bean ConversionService`, if a non-web test context becomes unavoidable).
 - Session/terminal history for this project has been lost before mid-session. This file
   plus git commits (once initialized) are the durable record — prefer committing working
   states over relying on conversation recovery.
