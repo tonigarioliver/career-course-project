@@ -30,7 +30,7 @@ class ReservationServiceIntegrationTest {
     static class ConversionServiceTestConfig {
         @Bean
         ConversionService conversionService(List<Converter<?, ?>> converters) {
-            DefaultConversionService conversionService = new DefaultConversionService();
+            final DefaultConversionService conversionService = new DefaultConversionService();
             converters.forEach(conversionService::addConverter);
             return conversionService;
         }
@@ -51,46 +51,46 @@ class ReservationServiceIntegrationTest {
 
     @Test
     void create_overlappingReservation_throwsConflict() {
-        ResourceDto resource = resourceService.create(
+        final ResourceDto resource = this.resourceService.create(
                 CreateResourceRequest.builder().name("Room A").build());
 
-        Instant start = Instant.parse("2026-01-01T10:00:00Z");
-        Instant end = Instant.parse("2026-01-01T11:00:00Z");
+        final Instant start = Instant.parse("2026-01-01T10:00:00Z");
+        final Instant end = Instant.parse("2026-01-01T11:00:00Z");
 
-        reservationService.create(CreateReservationRequest.builder()
+        this.reservationService.create(CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(start)
                 .endTime(end)
                 .ownerSubject("user-1")
                 .build());
 
-        CreateReservationRequest overlapping = CreateReservationRequest.builder()
+        final CreateReservationRequest overlapping = CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(start.plusSeconds(1800))
                 .endTime(end.plusSeconds(1800))
                 .ownerSubject("user-2")
                 .build();
 
-        assertThatThrownBy(() -> reservationService.create(overlapping))
+        assertThatThrownBy(() -> this.reservationService.create(overlapping))
                 .isInstanceOf(ReservationConflictException.class);
     }
 
     @Test
     void create_backToBackReservation_succeeds() {
-        ResourceDto resource = resourceService.create(
+        final ResourceDto resource = this.resourceService.create(
                 CreateResourceRequest.builder().name("Room B").build());
 
-        Instant start = Instant.parse("2026-01-02T10:00:00Z");
-        Instant end = Instant.parse("2026-01-02T11:00:00Z");
+        final Instant start = Instant.parse("2026-01-02T10:00:00Z");
+        final Instant end = Instant.parse("2026-01-02T11:00:00Z");
 
-        reservationService.create(CreateReservationRequest.builder()
+        this.reservationService.create(CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(start)
                 .endTime(end)
                 .ownerSubject("user-1")
                 .build());
 
-        ReservationDto backToBack = reservationService.create(CreateReservationRequest.builder()
+        final ReservationDto backToBack = this.reservationService.create(CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(end)
                 .endTime(end.plusSeconds(3600))

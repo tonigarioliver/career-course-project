@@ -93,6 +93,33 @@ The rest of the roadmap past Kubernetes was not recovered — if the user refere
 
 - Follow the user's global Java/Spring `static`/domain-modeling guidelines in
   `~/.claude/CLAUDE.md` for all code in this repo.
+- Follow the backend best-practices notes in `~/Downloads/code/back/` (dto-patterns.md,
+  jpa-best-practices.md, spring-boot-architecture.md, java-best-practices.md):
+  - **Reads skip the entity + `ConversionService`.** Query straight into the `record`
+    DTO with a JPQL constructor expression (`SELECT new ...Dto(...)`) — see
+    `ResourceRepository.findSummaryById`/`findAllSummaries` and
+    `ReservationRepository.findSummariesByResourceId`. Keep entity + `ConversionService`
+    only for create/update/delete, where the entity is actually mutated/persisted.
+  - Explicit `this.` on every instance field/method access from within the class
+    (`this.resourceRepository.save(...)`, not `resourceRepository.save(...)`).
+  - Local variables declared `final` (`final var x = ...` / `final Type x = ...`).
+  - Constructor injection via `@RequiredArgsConstructor` (Lombok) over
+    `@AllArgsConstructor` or manual constructors/field `@Autowired` — already the
+    convention in every `@Service`/`@RestController` here.
+  - `@Validated` on every `@Service` class, with `@Valid`/`@NotNull` on its public
+    method parameters (`ResourceService`, `ReservationService`). Without `@Validated`,
+    Bean Validation annotations on a service method's parameters are silently ignored —
+    validation only happened to work before because the controller's `@Valid
+    @RequestBody` covers that path, but calling the service directly (another service,
+    a test) bypassed it entirely. `@Validated` on a service throws
+    `ConstraintViolationException` (not `MethodArgumentNotValidException`, which is
+    controller-only) — `GlobalExceptionHandler` handles both.
+  - **`@Valid` alone does not reject a `null` argument.** `@Valid` only cascades
+    validation into the object's own fields; if the parameter itself is `null` there's
+    nothing to cascade into, so no violation is raised. Every request-body parameter
+    validated with `@Valid` also needs `@NotNull` alongside it
+    (`@NotNull @Valid CreateResourceRequest request`) to catch a null argument at the
+    service boundary.
 - `ddl-auto: update` is a deliberate course-project shortcut (see comment in
   `application.yml`) — replace with Flyway migrations once Phase 2 (indexes/partitions)
   of the roadmap starts.

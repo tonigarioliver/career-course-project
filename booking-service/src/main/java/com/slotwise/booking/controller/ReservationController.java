@@ -26,13 +26,13 @@ public class ReservationController {
     @PostMapping("/api/reservations")
     @ResponseStatus(HttpStatus.CREATED)
     public ReservationDto create(@Valid @RequestBody CreateReservationRequest request) {
-        return reservationService.create(request);
+        return this.reservationService.create(request);
     }
 
     @GetMapping("/api/resources/{resourceId}/reservations")
     public Page<ReservationDto> listByResource(
             @PathVariable Long resourceId,
             @PageableDefault(size = 20, sort = "startTime") Pageable pageable) {
-        return reservationService.listByResource(resourceId, pageable);
+        return this.reservationService.listByResource(resourceId, pageable);
     }
 }

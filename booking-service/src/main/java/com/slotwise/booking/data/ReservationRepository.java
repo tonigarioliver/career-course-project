@@ -1,5 +1,6 @@
 package com.slotwise.booking.data;
 
+import com.slotwise.booking.model.ReservationDto;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.data.domain.Page;
@@ -10,7 +11,13 @@ import org.springframework.data.repository.query.Param;
 
 public interface ReservationRepository extends JpaRepository<Reservation, Long> {
 
-    Page<Reservation> findByResourceId(Long resourceId, Pageable pageable);
+    @Query("""
+            SELECT new com.slotwise.booking.model.ReservationDto(
+                r.id, r.resource.id, r.startTime, r.endTime, r.ownerSubject, r.status)
+            FROM Reservation r
+            WHERE r.resource.id = :resourceId
+            """)
+    Page<ReservationDto> findSummariesByResourceId(@Param("resourceId") Long resourceId, Pageable pageable);
 
     @Query("""
             SELECT r FROM Reservation r

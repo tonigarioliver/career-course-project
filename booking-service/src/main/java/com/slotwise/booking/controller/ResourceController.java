@@ -29,27 +29,27 @@ public class ResourceController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ResourceDto create(@Valid @RequestBody CreateResourceRequest request) {
-        return resourceService.create(request);
+        return this.resourceService.create(request);
     }
 
     @GetMapping
     public Page<ResourceDto> list(@PageableDefault(size = 20, sort = "id") Pageable pageable) {
-        return resourceService.list(pageable);
+        return this.resourceService.list(pageable);
     }
 
     @GetMapping("/{id}")
     public ResourceDto getById(@PathVariable Long id) {
-        return resourceService.getById(id);
+        return this.resourceService.getById(id);
     }
 
     @PutMapping("/{id}")
     public ResourceDto update(@PathVariable Long id, @Valid @RequestBody CreateResourceRequest request) {
-        return resourceService.update(id, request);
+        return this.resourceService.update(id, request);
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable Long id) {
-        resourceService.delete(id);
+        this.resourceService.delete(id);
     }
 }

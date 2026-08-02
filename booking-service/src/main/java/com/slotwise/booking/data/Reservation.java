@@ -52,11 +52,11 @@ public class Reservation {
         if (!(o instanceof Reservation other)) {
             return false;
         }
-        return id != null && id.equals(other.id);
+        return this.id != null && this.id.equals(other.id);
     }
 
     @Override
     public int hashCode() {
-        return getClass().hashCode();
+        return this.getClass().hashCode();
     }
 }
