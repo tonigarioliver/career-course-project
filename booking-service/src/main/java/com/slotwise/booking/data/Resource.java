@@ -37,11 +37,11 @@ public class Resource {
         if (!(o instanceof Resource other)) {
             return false;
         }
-        return id != null && id.equals(other.id);
+        return this.id != null && this.id.equals(other.id);
     }
 
     @Override
     public int hashCode() {
-        return getClass().hashCode();
+        return this.getClass().hashCode();
     }
 }

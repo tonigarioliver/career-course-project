@@ -3,6 +3,7 @@ package com.slotwise.booking.controller;
 import com.slotwise.booking.model.ApiErrorResponse;
 import com.slotwise.booking.service.ReservationConflictException;
 import com.slotwise.booking.service.ResourceNotFoundException;
+import jakarta.validation.ConstraintViolationException;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -15,10 +16,21 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
-        var fieldErrors = ex.getBindingResult().getFieldErrors().stream()
+        final var fieldErrors = ex.getBindingResult().getFieldErrors().stream()
                 .collect(Collectors.toMap(
                         error -> error.getField(),
                         error -> error.getDefaultMessage() == null ? "invalid" : error.getDefaultMessage(),
+                        (first, second) -> first));
+        return ResponseEntity.badRequest()
+                .body(ApiErrorResponse.builder().message("Validation failed").fieldErrors(fieldErrors).build());
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiErrorResponse> handleConstraintViolation(ConstraintViolationException ex) {
+        final var fieldErrors = ex.getConstraintViolations().stream()
+                .collect(Collectors.toMap(
+                        violation -> violation.getPropertyPath().toString(),
+                        violation -> violation.getMessage(),
                         (first, second) -> first));
         return ResponseEntity.badRequest()
                 .body(ApiErrorResponse.builder().message("Validation failed").fieldErrors(fieldErrors).build());
