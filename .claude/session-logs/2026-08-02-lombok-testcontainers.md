@@ -51,22 +51,31 @@ Looked like a bad/nonexistent version pin at first. Actual root cause: Testconta
 they're `testcontainers-junit-jupiter` and `testcontainers-postgresql`. Confirmed by
 grepping the cached `testcontainers-bom-2.0.5.pom` in `~/.m2` for artifact IDs.
 
-Fix (uncommitted as of this log): 
+Fix (committed in `c7d1e70`): 
 - Dropped the `testcontainers.version` property and explicit `<version>` overrides
   entirely — Spring Boot 4.0.1's own BOM already imports `testcontainers-bom`
   transitively, no need to repin it.
 - Updated `booking-service/pom.xml` dependencies to `testcontainers-junit-jupiter` /
   `testcontainers-postgresql`.
-- Verified `mvn -pl booking-service -am clean test-compile` resolves and compiles clean.
-- **Not yet verified end-to-end**: Docker Desktop's WSL integration was off for this
-  distro (`docker` resolved to a Windows stub telling you to enable it), so the actual
-  `@Testcontainers`-based `ReservationServiceIntegrationTest` hasn't run. User was in the
-  process of enabling WSL integration in Docker Desktop settings and rebooting the
-  machine when this log was written.
 
-**Next step when resuming**: run `docker info` to confirm Docker is reachable from this
-WSL shell, then `mvn -pl booking-service test` to actually execute
-`ReservationServiceIntegrationTest`. If it passes, commit the testcontainers pom changes.
+**RESOLVED — verified end-to-end in the follow-up session (2026-08-02, later same day).**
+Docker Desktop's WSL integration was turned on and the machine rebooted; `docker info`
+succeeded from this shell. Ran `mvn -pl booking-service test`, which surfaced one more
+real (unrelated) bug: `ResourceService`/`ReservationService` inject `ConversionService`,
+which in production only exists because `WebMvcAutoConfiguration` registers one
+(`mvcConversionService`) — a `@SpringBootTest(webEnvironment = NONE)` skips that
+autoconfig entirely, so the context failed to load. Fixed (commit `c1a8f66`) by adding a
+nested `@TestConfiguration` in `ReservationServiceIntegrationTest` that builds a
+`DefaultConversionService` and registers all `Converter<?, ?>` beans into it — pattern
+borrowed from `app-mvn-alpha-operating-costs-api`'s `AircraftModelServiceTest` (see
+memory `reference-alpha-operating-costs-test-patterns`). Also switched the test to
+constructor injection (commit `6b7270d`) to match that reference project's style.
+Final result: `mvn -pl booking-service test` → 2/2 pass against a real Testcontainers
+Postgres container.
+
+**This item is closed — no further action needed.** The course roadmap
+(Fase 1, Testing: JUnit 5/Mockito/Testcontainers/Integration Tests) can resume from
+here; nothing about Lombok or Testcontainers setup is outstanding.
 
 ## Other setup done this session
 
@@ -78,7 +87,7 @@ WSL shell, then `mvn -pl booking-service test` to actually execute
   course roadmap — this is the durable, auto-loaded record of project state and should
   be kept up to date instead of relying on chat recovery.
 
-## Working tree state as of reboot
+## Working tree state as of reboot (historical — superseded, see below)
 
 ```
 git log --oneline
@@ -90,4 +99,21 @@ git status --short
  M pom.xml
 ```
 
-Those 3 uncommitted files contain the testcontainers fix described above.
+Those 3 uncommitted files contained the testcontainers fix described above.
+
+## Final state (end of 2026-08-02, follow-up session)
+
+```
+git log --oneline
+6b7270d Use constructor injection in ReservationServiceIntegrationTest
+c1a8f66 Wire ConversionService via test-only DefaultConversionService instead of web context
+0ea349f Verify testcontainers fix end-to-end; fix ConversionService bean gap in test
+c7d1e70 Add session log; note testcontainers fix as unverified pending Docker
+0ef25a4 Initial commit: booking-service compiles clean
+
+git status --short
+(clean)
+```
+
+Everything from this log is committed and verified. Working tree clean. Safe to move
+on to the next roadmap topic without revisiting Lombok/Testcontainers/ConversionService.
