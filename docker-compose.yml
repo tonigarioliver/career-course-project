@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: slotwise
+      POSTGRES_USER: slotwise
+      POSTGRES_PASSWORD: slotwise
+    ports:
+      - "5432:5432"
+    volumes:
+      - slotwise-postgres:/var/lib/postgresql/data
+
+volumes:
+  slotwise-postgres:

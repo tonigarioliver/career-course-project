@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: booking-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:slotwise}
+    username: ${DB_USER:slotwise}
+    password: ${DB_PASSWORD:slotwise}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # ponytail: ddl-auto=update for course-project convenience; replace with Flyway
+      # migrations once the schema needs indexes/partitions (Phase 2 of the roadmap).
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
