@@ -2,3 +2,5 @@ target/
 .idea/
 *.iml
 .claude/settings.local.json
+.venv-docs/
+docs-site/site/
