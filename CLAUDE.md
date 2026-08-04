@@ -2,7 +2,6 @@
 
 Booking/reservations platform used as a course project across a backend learning
 roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → Docker → K8s).
-Not a git repo yet.
 
 ## Structure
 
@@ -15,7 +14,11 @@ Not a git repo yet.
   - `service/` — `ResourceService`, `ReservationService` (constructor injection, `@Transactional`),
     converters, domain exceptions (`ResourceNotFoundException`, `ReservationConflictException`)
   - `controller/` — REST controllers + `GlobalExceptionHandler` (`@ControllerAdvice`)
-- `docker-compose.yml` — local Postgres 17 (`slotwise`/`slotwise`/`slotwise`).
+  - `security/` — `SecurityConfig` (OAuth2 Resource Server + `@EnableMethodSecurity`,
+    JWT → `ROLE_*` authority mapping off Keycloak's `realm_access.roles` claim)
+- `docker-compose.yml` — local Postgres 17 (`slotwise`/`slotwise`/`slotwise`) and
+  Keycloak 26 (OIDC Authorization Server, port `8081`, realm auto-imported from
+  `keycloak/realm-export.json` via `--import-realm`).
 - `.sdkmanrc` — Java 25.0.4-tem, Maven 3.9.11.
 
 ## Known gotchas (already hit once, don't re-debug from scratch)
@@ -48,6 +51,24 @@ Not a git repo yet.
   `WebEnvironment.NONE` instead of paying for a full servlet context just to get a
   `ConversionService`. Any future non-web test that needs `ResourceService`/
   `ReservationService` will hit the same gap and needs the same `@TestConfiguration`.
+- **Spring's `@NonNullApi`/`@NonNullFields` are deprecated under Spring 7** (pulled in by
+  Spring Boot 4.0.1). Every `package-info.java` uses JSpecify's `@NullMarked` instead
+  (`org.jspecify.annotations.NullMarked` — ships transitively via `spring-core`, no new
+  dependency needed).
+- **`@PathVariable` without an explicit name needs the compiler's `-parameters`
+  flag.** `spring-boot-starter-parent` sets it by default; this project doesn't
+  extend it, so unnamed `@PathVariable Long id`-style params failed at runtime with
+  "parameter name information not available via reflection". Fixed by adding
+  `<parameters>true</parameters>` to `booking-service/pom.xml`'s
+  `maven-compiler-plugin` config — and note `mvn clean compile` (not just
+  `compile`) is needed once to pick up a compiler-flag-only change.
+- **Keycloak realm import needs `firstName`/`lastName` on every user** or the password
+  grant fails with `invalid_grant: Account is not fully set up` (Keycloak 26's User
+  Profile feature implicitly requires them; the gap doesn't show in the user's
+  `requiredActions` list). Also, re-importing after editing `keycloak/realm-export.json`
+  needs `docker compose up -d --force-recreate keycloak` — `--import-realm` skips a
+  realm that already exists by name, and there's no named volume for Keycloak's own
+  storage so recreating the container clears it.
 - Session/terminal history for this project has been lost before mid-session. This file
   plus git commits (once initialized) are the durable record — prefer committing working
   states over relying on conversation recovery.

@@ -1,0 +1,42 @@
+{
+  "realm": "slotwise",
+  "enabled": true,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      { "name": "RESERVATION_ADMIN" },
+      { "name": "RESERVATION_USER" }
+    ]
+  },
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "alice@slotwise.local",
+      "firstName": "Alice",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "alice123", "temporary": false }],
+      "realmRoles": ["RESERVATION_ADMIN"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "bob@slotwise.local",
+      "firstName": "Bob",
+      "lastName": "User",
+      "credentials": [{ "type": "password", "value": "bob123", "temporary": false }],
+      "realmRoles": ["RESERVATION_USER"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "booking-service-client",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true
+    }
+  ]
+}
