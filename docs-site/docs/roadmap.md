@@ -16,8 +16,13 @@ from the original course material.
       `@NotNull @Valid` on service method parameters, `@ControllerAdvice`
       (`GlobalExceptionHandler`) handling both `MethodArgumentNotValidException` and
       `ConstraintViolationException`.
-- [ ] **Security** — JWT, OAuth2, OIDC, Resource Server, Method Security, `@PreAuthorize`
-      and when *not* to use it.
+- [x] **Security** — Keycloak (OIDC Authorization Server) added to `docker-compose.yml`
+      with an imported realm (`keycloak/realm-export.json`: roles, a public client,
+      two test users). `booking-service` is an OAuth2 **Resource Server**
+      (`spring-boot-starter-oauth2-resource-server`) validating Keycloak-issued JWTs
+      via `issuer-uri`. `@EnableMethodSecurity` + `@PreAuthorize` restrict resource
+      management to the `RESERVATION_ADMIN` role. Verified end-to-end: no token →
+      `401`, wrong role → `403`, right role → `201`.
 - [ ] **Configuration** — `@ConfigurationProperties`, Profiles, Externalized Config,
       Secrets.
 - [ ] **Logs** — SLF4J, Logback, MDC, Correlation IDs.

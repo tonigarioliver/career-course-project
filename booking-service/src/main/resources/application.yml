@@ -1,6 +1,11 @@
 spring:
   application:
     name: booking-service
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8081/realms/slotwise}
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:slotwise}
     username: ${DB_USER:slotwise}
