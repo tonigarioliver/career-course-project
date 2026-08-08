@@ -31,7 +31,14 @@ from the original course material.
       deploy missing an env var fails to start instead of silently using localhost
       values, and switches `ddl-auto` to `validate`. Externalized config/secrets
       already covered by the `${VAR:default}` placeholders in `application.yml`.
-- [ ] **Logs** — SLF4J, Logback, MDC, Correlation IDs.
+- [x] **Logs** — `CorrelationIdFilter` (hand-rolled `OncePerRequestFilter`) reads/mints an
+      `X-Correlation-Id` per request, puts it in SLF4J's MDC for the request's thread,
+      echoes it back on the response, clears it in a `finally`. `logging.pattern.console`
+      includes `%X{correlationId}` so every log line from that request is grep-able
+      together. `ReservationService` logs on create/conflict via Lombok's `@Slf4j`. See
+      "MDC is thread-local — deliberately hand-rolled, not Micrometer Tracing (yet)" in
+      decisions.md for why this wasn't done with Spring's built-in tracing library, and
+      why Fase 4 (Kafka) is where that changes.
 
 Project target: a full enterprise API.
 
@@ -61,6 +68,15 @@ Project target: add user cache, rate limiting, sessions.
 - [ ] Topics, Partitions, Offsets, Consumer Groups.
 - [ ] Delivery guarantees (At Most Once, At Least Once, Exactly Once).
 - [ ] Patterns: Event Driven, Outbox, Saga, CQRS, Event Sourcing (conceptually).
+- [ ] **Migrate correlation IDs to Micrometer Tracing** (`micrometer-tracing-bridge-brave`
+      or `-otel`) once there's more than one service. The hand-rolled `CorrelationIdFilter`
+      from Fase 1 only correlates logs *within* `booking-service` — it has no way to carry
+      an ID across a Kafka message to `notification-service`/`audit-service` without
+      manually stuffing it into every message's headers by hand. Micrometer Tracing
+      auto-generates `traceId`/`spanId`, has built-in Kafka producer/consumer
+      instrumentation that propagates the trace through message headers for free, and can
+      export to Zipkin/Tempo to see one request's whole path across all three services
+      visually. See decisions.md for the full rationale.
 
 Project target: split into User Service / Notification Service / Audit Service
 communicating via Kafka.

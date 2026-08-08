@@ -7,6 +7,69 @@ icon: lucide/lightbulb
 Non-obvious bugs and design calls, kept so they don't get re-debugged from scratch.
 Full narrative for the oldest ones lives in `.claude/session-logs/`.
 
+## MDC is thread-local — deliberately hand-rolled, not Micrometer Tracing (yet)
+
+`CorrelationIdFilter` (`OncePerRequestFilter`) reads an inbound `X-Correlation-Id`
+header or mints a `UUID`, puts it in SLF4J's `MDC` for the request, echoes it back on
+the response, and clears it in a `finally`. `logging.pattern.console` includes
+`%X{correlationId}` so Logback prints it on every line written on that thread.
+
+### Why hand-rolled instead of reaching for a library immediately
+
+Spring already has an industrial-strength answer to this: **Micrometer Tracing**
+(`micrometer-tracing-bridge-brave`/`-otel`, the successor to the retired Spring Cloud
+Sleuth). Adding that dependency gets you `traceId`/`spanId` in MDC automatically, no
+filter needed, plus propagation across HTTP calls and export to a tracing backend
+(Zipkin/Tempo) — strictly more capable than what's here.
+
+It wasn't reached for immediately because this phase of the roadmap ("Logs — SLF4J,
+Logback, MDC, Correlation IDs") is explicitly about learning the *mechanism*
+hands-on — `MDC` is a `ThreadLocal<Map>`, and understanding that is what explains every
+gotcha below it. Reaching for the library first would have skipped straight to "add a
+dependency" without ever touching the thing that dependency wraps.
+
+### Why `MDC` (and `SecurityContextHolder`) need explicit propagation off the request thread
+
+`MDC`'s default backing is a `ThreadLocal` — scoped to *one* thread. Two consequences
+that matter the moment this project stops being single-threaded-per-request:
+
+- **Async work loses it.** `ExecutorService.submit(...)`, `CompletableFuture.supplyAsync(...)`,
+  Spring's `@Async` — none of these copy the parent thread's `MDC` into the worker
+  thread. Logs from that worker either show an empty `correlationId` or, worse, a
+  **stale one leaked from a previous task** that ran on the same pooled thread and
+  didn't clean up. Same failure mode, same fix shape, for `SecurityContextHolder`
+  (`MODE_THREADLOCAL` by default) — an `@Async` method sees an anonymous
+  `Authentication`, not the caller's, unless the context is propagated.
+- **Propagation is manual, not automatic** — `MDC.getCopyOfContextMap()` in the parent
+  thread, `MDC.setContextMap(...)` + `MDC.clear()` in a `finally` in the child. Spring's
+  `TaskDecorator` (set on a `ThreadPoolTaskExecutor`) is the idiomatic way to apply that
+  wrapping to every task without hand-wrapping each call site; Spring Security ships the
+  equivalent for its own context (`DelegatingSecurityContextExecutor`).
+- **Virtual threads (JDK 21+) don't fix this for free.** The JDK explicitly does not
+  inherit `InheritableThreadLocal` into a newly created virtual thread — so plain `MDC`
+  still needs the same manual copy/restore. What *does* auto-propagate into forked
+  subtasks is `ScopedValue` + `StructuredTaskScope` (structured concurrency) — a
+  different, newer API, not something `MDC`/`Logback` are built on. In Spring-land, the
+  practical equivalent is Micrometer's **Context Propagation** library
+  (`io.micrometer:context-propagation`), which Boot auto-configures with `ThreadLocalAccessor`s
+  for both `MDC` and `SecurityContextHolder` when it's on the classpath — that's the
+  "it just works across threads" behavior, not a JDK-level default.
+- None of this is live code here yet — no `@Async`, no custom executor, no virtual
+  threads in `booking-service` today, so no `TaskDecorator` was added (would be
+  unused abstraction — YAGNI). Flagged here so it's not re-discovered as a surprise
+  the day an async path gets added.
+
+### Why this becomes Micrometer Tracing at Fase 4, not before
+
+A correlation ID that only lives in one process's MDC stops being useful the moment
+the roadmap splits `booking-service` into User/Notification/Audit services talking over
+Kafka (Fase 4) — carrying it across a Kafka message means manually stuffing it into
+every message's headers and reading it back out in every consumer, by hand, forever.
+Micrometer Tracing's Kafka instrumentation does exactly that propagation automatically,
+plus gives a visual trace of one request's path across all three services. Fase 1's
+hand-rolled filter is the right scope for "one service, one log stream, understand the
+mechanism"; Fase 4 is where the problem it solves outgrows what it can do.
+
 ## Lombok annotation processing silently no-ops
 
 ??? info "Root cause and fix"
