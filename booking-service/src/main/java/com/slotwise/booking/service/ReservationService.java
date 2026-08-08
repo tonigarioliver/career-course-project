@@ -11,6 +11,7 @@ import com.slotwise.booking.model.ReservationDto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 
+@Slf4j
 @Service
 @Validated
 @RequiredArgsConstructor
@@ -45,6 +47,8 @@ public class ReservationService {
                 .findOverlapping(request.resourceId(), request.startTime(), request.endTime())
                 .isEmpty();
         if (hasOverlap) {
+            log.warn("Reservation conflict for resource {}: {} - {} overlaps an existing reservation",
+                    request.resourceId(), request.startTime(), request.endTime());
             throw new ReservationConflictException(request.resourceId());
         }
 
@@ -55,7 +59,11 @@ public class ReservationService {
         reservation.setOwnerSubject(request.ownerSubject());
         reservation.setStatus(ReservationStatus.CONFIRMED);
 
-        return this.conversionService.convert(this.reservationRepository.save(reservation), ReservationDto.class);
+        final ReservationDto saved =
+                this.conversionService.convert(this.reservationRepository.save(reservation), ReservationDto.class);
+        log.info("Created reservation {} for resource {} ({} - {})",
+                saved.id(), request.resourceId(), request.startTime(), request.endTime());
+        return saved;
     }
 
     @Transactional(readOnly = true)

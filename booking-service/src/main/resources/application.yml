@@ -20,6 +20,11 @@ spring:
       hibernate:
         format_sql: true
 
+logging:
+  pattern:
+    # [correlationId] lets you grep every log line for one request across the whole call.
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [%X{correlationId}] %-40.40logger{39} : %m%n"
+
 slotwise:
   reservation:
     min-duration-minutes: 15
