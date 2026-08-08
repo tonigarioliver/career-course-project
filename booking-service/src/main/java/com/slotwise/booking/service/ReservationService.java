@@ -13,6 +13,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.convert.ConversionService;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -40,7 +41,11 @@ public class ReservationService {
                     + this.reservationProperties.maxDurationMinutes() + " minutes");
         }
 
-        final Resource resource = this.resourceRepository.findById(request.resourceId())
+        // Locks the resource row (SELECT ... FOR UPDATE) so a concurrent create() for the same
+        // resource blocks here instead of racing the overlap check below — without it, two
+        // requests can both see "no overlap" and both insert (reproduced and documented in
+        // decisions.md). The lock is released on commit/rollback of this transaction.
+        final Resource resource = this.resourceRepository.findByIdForUpdate(request.resourceId())
                 .orElseThrow(() -> new ResourceNotFoundException(request.resourceId()));
 
         final boolean hasOverlap = !this.reservationRepository
@@ -59,11 +64,22 @@ public class ReservationService {
         reservation.setOwnerSubject(request.ownerSubject());
         reservation.setStatus(ReservationStatus.CONFIRMED);
 
-        final ReservationDto saved =
-                this.conversionService.convert(this.reservationRepository.save(reservation), ReservationDto.class);
+        final ReservationDto saved = this.saveAndTranslateConflict(reservation, request.resourceId());
         log.info("Created reservation {} for resource {} ({} - {})",
                 saved.id(), request.resourceId(), request.startTime(), request.endTime());
         return saved;
+    }
+
+    // The FOR UPDATE lock above + the overlap check make this unreachable in practice — this
+    // is the DB-level backstop (the reservations_no_overlap EXCLUDE constraint, see
+    // decisions.md) catching whatever the application-level check didn't, e.g. a bug in the
+    // check itself or a row inserted by something that bypasses this service entirely.
+    private ReservationDto saveAndTranslateConflict(Reservation reservation, Long resourceId) {
+        try {
+            return this.conversionService.convert(this.reservationRepository.save(reservation), ReservationDto.class);
+        } catch (DataIntegrityViolationException e) {
+            throw new ReservationConflictException(resourceId);
+        }
     }
 
     @Transactional(readOnly = true)

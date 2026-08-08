@@ -133,6 +133,112 @@ apply `Index Cond` on the full expression instead of fetching every row for a pl
 environment, not just this manually-seeded one — confirmed re-running the app doesn't
 try to create a duplicate (same index name already exists, Hibernate skips it).
 
+## The `findOverlapping` check-then-insert race (MVCC/Read Committed, and the fix)
+
+`ReservationService.create()` did `SELECT` (any overlap?) then `INSERT` — two statements,
+no lock between them. Reproduced with two real concurrent transactions against the
+docker-compose Postgres (not the app — raw SQL, same pattern):
+
+```sql
+-- Session A                                  -- Session B (started ~same time)
+BEGIN;                                         BEGIN;
+SELECT count(*) ... ;  -- sees 0               SELECT count(*) ... ;  -- sees 0 (A hasn't committed)
+SELECT pg_sleep(2);                            SELECT pg_sleep(2);
+INSERT ... (10:00-11:00);                      INSERT ... (10:30-11:30);  -- overlaps A's row
+COMMIT;                                        COMMIT;
+```
+
+Both committed. Two overlapping reservations for the same resource, both past the
+"conflict" check, because **Read Committed** (Postgres' default isolation level) only
+guarantees each statement sees what's already *committed* at the moment it runs — neither
+session had committed yet when the other ran its `SELECT`, so neither saw the other's
+in-flight insert. This is MVCC working exactly as designed; the bug is in the application
+assuming "read then write" is atomic without asking for that guarantee explicitly.
+
+### Two independent fixes, why both
+
+**1. `SELECT ... FOR UPDATE` on the `Resource` row** (`ResourceRepository.findByIdForUpdate`,
+`@Lock(LockModeType.PESSIMISTIC_WRITE)` — Spring Data's declarative way to add `FOR UPDATE`
+to the generated SQL; a hand-written native query would produce the identical SQL, so no
+reason to have both). `ReservationService.create()` locks the resource row before the
+overlap check. The loser of the race for that lock **blocks** until the winner's
+transaction commits, then re-reads with a fresh snapshot that now includes the winner's
+committed row — so it correctly detects the conflict and throws `ReservationConflictException`
+cleanly, instead of racing past the check. Verified with a real two-thread
+`ExecutorService` integration test (`create_concurrentOverlappingReservations_onlyOneSucceeds`)
+— no artificial `sleep`/latch needed to force the interleaving; the row lock does that on
+its own, deterministically, every run.
+
+**2. `reservations_no_overlap` EXCLUDE constraint** (DB-level backstop, see below) — even if
+`FOR UPDATE` were removed by a future refactor, or some other code path bypassed
+`ReservationService` entirely (a bulk import, a manual `INSERT`, a bug), the database itself
+refuses the corrupt row. `ReservationService.saveAndTranslateConflict` catches the resulting
+`DataIntegrityViolationException` and rethrows the same `ReservationConflictException`, so
+the API contract doesn't change depending on which layer caught the conflict.
+
+Chose *both* over either alone deliberately — this is the general pattern for correctness
+under concurrency in a horizontally-scaled app (see the "why not just a Java lock"
+discussion below): app-level locking (`FOR UPDATE`) for a clean user-facing error, DB-level
+constraint as the guarantee that survives even a buggy or missing app-level check. A plain
+Java `synchronized`/`ReentrantLock` was **not** an option for either purpose — it only
+locks within one JVM; two instances of `booking-service` behind a load balancer (the whole
+point of Fase 6's Kubernetes scaling) would each have their own lock, unaware of the other,
+and the race would reproduce exactly as before. DB-level locks (`FOR UPDATE`, the
+constraint) live in Postgres, so they hold regardless of how many app instances are calling
+in. Distributed locks (Redisson, Fase 3) are the equivalent for resources that *aren't*
+naturally a DB row — not needed here, since `Resource` already is one.
+
+### The EXCLUDE constraint itself: generalizing `UNIQUE`
+
+`UNIQUE` rejects two rows with the *same* value — implemented as a btree index, which only
+understands `=`. "No two reservations for the same resource overlap in time" isn't an
+equality relationship (10:00-11:00 and 10:30-11:30 aren't equal, they overlap) — btree/`UNIQUE`
+has no vocabulary for that. `EXCLUDE` generalizes `UNIQUE` to any operator, not just `=`:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+ALTER TABLE reservations
+    ADD CONSTRAINT reservations_no_overlap
+    EXCLUDE USING gist (
+        resource_id WITH =,
+        tstzrange(start_time, end_time) WITH &&
+    ) WHERE (status <> 'CANCELLED');
+```
+
+Reads as: reject any row that would leave two *active* rows with equal `resource_id`
+**and** overlapping (`&&`) time ranges. `tstzrange(start_time, end_time)` combines the two
+`Instant` columns into one Postgres range value on the fly, so `&&` (overlaps) applies to
+it. Needs `USING gist`, not `btree`, because btree only supports operators with a total
+order (`=`,`<`,`>`) — it cannot index "do these overlap"; GiST (Generalized Search Tree) is
+built to support arbitrary indexable operators, and Postgres' range types ship built-in
+GiST support for `&&`. The `btree_gist` extension is what lets a *plain scalar* column
+(`resource_id`, a `bigint`) sit in the same GiST index next to a range column — GiST alone
+has no operator class for bare equality on a `bigint` (first attempt failed with "data type
+bigint has no default operator class for access method gist" until the extension was
+added). `WHERE (status <> 'CANCELLED')` makes it a **partial** exclusion constraint (same
+idea as a partial index) — a cancelled reservation shouldn't keep blocking its old slot.
+
+**First attempt at creating it failed** against the original randomly-seeded 3M-row
+dataset — real overlaps existed between rows generated by pure independent `random()` calls
+per row, since nothing constrained the seed data not to overlap. Same lesson as adding a
+constraint to a real production table with pre-existing dirty data: it fails immediately,
+loudly, before any damage. Fixed by regenerating `scripts/seed-fase2-data.sql` to build
+per-resource reservations **sequentially** (each one starts where the last one's gap ends,
+via a window-function running sum) instead of independently at random — zero overlap by
+construction, same realistic volume for index/`EXPLAIN ANALYZE` work.
+
+**Wiring into the app**: no JPA annotation exists for exclusion constraints, so
+`ddl-auto=update` can't create this one. `ReservationOverlapConstraintInitializer`
+(`ApplicationRunner`) runs the `CREATE EXTENSION`/`ALTER TABLE` via raw JDBC on every boot,
+guarded by a `pg_constraint` existence check so it's a no-op after the first run. **Not**
+done via Spring Boot's `schema.sql` mechanism — its script splitter naively cuts on every
+`;`, including the ones inside the constraint's `DO $$ ... $$` block, breaking it into
+invalid fragments (`Unterminated dollar quote`). Raw JDBC sends the whole block as one
+statement, no splitting involved. This is also the trigger CLAUDE.md predicted for
+replacing `ddl-auto=update` with Flyway — noted, not yet acted on (that's a bigger lift than
+this one constraint needed).
+
 ## MDC is thread-local — deliberately hand-rolled, not Micrometer Tracing (yet)
 
 `CorrelationIdFilter` (`OncePerRequestFilter`) reads an inbound `X-Correlation-Id`
