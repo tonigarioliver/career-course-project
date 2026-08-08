@@ -19,3 +19,8 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+slotwise:
+  reservation:
+    min-duration-minutes: 15
+    max-duration-minutes: 480

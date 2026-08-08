@@ -70,6 +70,35 @@ never be saved) and skips the entity → DTO conversion step entirely. Create/up
 delete keep entity + `ConversionService`, since those paths actually mutate and
 persist state.
 
+## Cross-field validation lives in the record's compact constructor
+
+`CreateReservationRequest`'s `startTime < endTime` check moved from a manual `if` in
+`ReservationService` into the record's own compact constructor:
+
+```java
+public CreateReservationRequest {
+    // null-guarded: this runs on every construction, including Jackson's JSON
+    // deserialization — before @NotNull/@Valid ever get a chance to run.
+    if (startTime != null && endTime != null && !startTime.isBefore(endTime)) {
+        throw new IllegalArgumentException("startTime must be before endTime");
+    }
+}
+```
+
+The request validates its own integrity instead of the service policing it — and since
+Lombok's `@Builder` on a record still calls the canonical constructor under the hood,
+one guard covers every construction path (JSON body, builder in tests, direct `new`).
+
+**Trade-off worth knowing**: the compact constructor runs *during* Jackson's
+`@RequestBody` deserialization, before `@Valid` ever runs. An exception thrown there
+gets wrapped by Spring in `HttpMessageNotReadableException`, not surfaced as our own
+`IllegalArgumentException` — so it bypassed `GlobalExceptionHandler`'s existing handler
+and returned Spring's generic error body instead of `ApiErrorResponse`. Fixed by adding
+an `HttpMessageNotReadableException` handler that unwraps `getMostSpecificCause()` and
+reuses the message when the cause is an `IllegalArgumentException`, falling back to a
+generic "Malformed request body" otherwise (e.g. actually-broken JSON, not a failed
+business check).
+
 ## `@Valid` alone does not reject a `null` argument
 
 `@Valid` only cascades validation into an object's own fields — if the argument
@@ -221,6 +250,42 @@ doesn't extend it (see the Lombok gotcha above), so it was missing. Fixed by add
 config-only change. Needed `mvn clean compile` to force a full recompile and
 actually get the `MethodParameters` attribute. Verify with:
 `javap -v -classpath target/classes <Controller> | grep -A3 MethodParameters`.
+
+## `@ConfigurationProperties` registration: dedicated `@Configuration` class over `@ConfigurationPropertiesScan`
+
+`ReservationProperties` (`slotwise.reservation.min-duration-minutes`/`max-duration-minutes`)
+is registered via `ReservationConfig`, a `@Configuration` class in the `config` package
+annotated `@EnableConfigurationProperties(ReservationProperties.class)` — not
+`@ConfigurationPropertiesScan` on the main application class. Both work; the explicit
+form keeps the registration list next to the properties class it registers instead of on
+an unrelated `@SpringBootApplication` class, and stays greppable as more properties
+classes get added (each just joins the `@EnableConfigurationProperties({...})` list, no
+scanning surprises).
+
+## `application-prod.yml`: same keys, no defaults
+
+The `prod` Spring profile (`application-prod.yml`, `spring.config.activate.on-profile:
+prod`) re-declares the same datasource/Keycloak keys as the base `application.yml` but
+**without** the `${VAR:default}` fallback — `${DB_HOST}` instead of
+`${DB_HOST:localhost}`. Missing an env var in a real deploy now fails Spring's property
+resolution at startup instead of silently booting against `localhost`/the dev Keycloak.
+Also flips `ddl-auto` to `validate` (Hibernate never mutates a prod schema — that's a
+migration tool's job, Flyway once Phase 2 lands) and turns off `format_sql`.
+
+## `SecurityFilterChain` bean needs `@ConditionalOnWebApplication`
+
+`ReservationServiceIntegrationTest` (`@SpringBootTest(webEnvironment = NONE)`) started
+failing to load its context once `SecurityConfig` was added: `securityFilterChain(HttpSecurity
+http)` couldn't find an `HttpSecurity` bean to inject. Same root cause as the
+`ConversionService` gotcha above — `HttpSecurity` is only auto-registered by Spring
+Security's own `HttpSecurityConfiguration`, which is itself `@ConditionalOnWebApplication`,
+so a `NONE`-web-environment test never gets one. Went unnoticed because nobody re-ran the
+Testcontainers test (needs Docker) after the OAuth2 commit.
+
+Fixed by adding `@ConditionalOnWebApplication` to `SecurityConfig` itself, mirroring
+Spring's own condition on `HttpSecurityConfiguration` — a `SecurityFilterChain` is
+inherently meaningless outside a servlet context, so the guard belongs on the bean, not
+copy-pasted into every non-web test that happens to load the full application context.
 
 ## `HttpSecurity.build()` doesn't declare `throws Exception` in Spring Security 7
 

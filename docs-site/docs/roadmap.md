@@ -23,8 +23,14 @@ from the original course material.
       via `issuer-uri`. `@EnableMethodSecurity` + `@PreAuthorize` restrict resource
       management to the `RESERVATION_ADMIN` role. Verified end-to-end: no token →
       `401`, wrong role → `403`, right role → `201`.
-- [ ] **Configuration** — `@ConfigurationProperties`, Profiles, Externalized Config,
-      Secrets.
+- [x] **Configuration** — `ReservationProperties` (`@ConfigurationProperties`, prefix
+      `slotwise.reservation`) registered via a dedicated `@Configuration` class
+      (`ReservationConfig`) instead of `@ConfigurationPropertiesScan`, wired into
+      `ReservationService` to enforce min/max reservation duration. `application-prod.yml`
+      profile drops every dev-friendly default (DB creds, Keycloak issuer) so a prod
+      deploy missing an env var fails to start instead of silently using localhost
+      values, and switches `ddl-auto` to `validate`. Externalized config/secrets
+      already covered by the `${VAR:default}` placeholders in `application.yml`.
 - [ ] **Logs** — SLF4J, Logback, MDC, Correlation IDs.
 
 Project target: a full enterprise API.

@@ -1,5 +1,6 @@
 package com.slotwise.booking.service;
 
+import com.slotwise.booking.config.ReservationProperties;
 import com.slotwise.booking.data.Reservation;
 import com.slotwise.booking.data.ReservationRepository;
 import com.slotwise.booking.data.ReservationStatus;
@@ -25,11 +26,16 @@ public class ReservationService {
     private final ReservationRepository reservationRepository;
     private final ResourceRepository resourceRepository;
     private final ConversionService conversionService;
+    private final ReservationProperties reservationProperties;
 
     @Transactional
     public ReservationDto create(@NotNull @Valid CreateReservationRequest request) {
-        if (!request.hasValidTimeRange()) {
-            throw new IllegalArgumentException("startTime must be before endTime");
+        final long durationMinutes = request.durationMinutes();
+        if (durationMinutes < this.reservationProperties.minDurationMinutes()
+                || durationMinutes > this.reservationProperties.maxDurationMinutes()) {
+            throw new IllegalArgumentException("duration must be between "
+                    + this.reservationProperties.minDurationMinutes() + " and "
+                    + this.reservationProperties.maxDurationMinutes() + " minutes");
         }
 
         final Resource resource = this.resourceRepository.findById(request.resourceId())
