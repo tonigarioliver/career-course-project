@@ -47,8 +47,14 @@ Project target: a full enterprise API.
 - [ ] MVCC internals.
 - [ ] Isolation levels (Read Committed, Repeatable Read, Serializable).
 - [ ] Locks, `FOR UPDATE`, deadlocks.
-- [ ] Indexes (BTree, GIN, GiST, Partial, Composite).
-- [ ] `EXPLAIN ANALYZE` until natural.
+- [x] **Indexes (Composite)** — `idx_reservations_resource_time` on
+      `(resource_id, start_time, end_time)`, backing `ReservationRepository.findOverlapping`.
+      Measured against 3M seeded rows (`scripts/seed-fase2-data.sql`): **132ms parallel seq
+      scan → 0.12ms bitmap index scan** (~1000x), ~34,000 buffers → 11. Made permanent via
+      `@Table(indexes = @Index(...))` on `Reservation`. Full `EXPLAIN ANALYZE` before/after
+      in decisions.md. BTree/GIN/GiST/Partial still to cover — this was one composite BTree.
+- [ ] `EXPLAIN ANALYZE` until natural — started (see above), keep reading plans as more
+      queries/indexes get added.
 - [ ] Partitioning (Range, List, Hash).
 - [ ] Replication (Read Replicas, Primary-Replica).
 
