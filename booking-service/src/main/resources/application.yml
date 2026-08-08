@@ -13,12 +13,21 @@ spring:
   jpa:
     open-in-view: false
     hibernate:
-      # ponytail: ddl-auto=update for course-project convenience; replace with Flyway
-      # migrations once the schema needs indexes/partitions (Phase 2 of the roadmap).
-      ddl-auto: update
+      # Flyway (db/migration) now owns schema DDL — validate only checks entities match it.
+      # Switched from ddl-auto=update once reservations needed PARTITION BY, which has no
+      # JPA annotation equivalent (same reason the old EXCLUDE-constraint ApplicationRunner
+      # existed, now folded into V1__partition_reservations.sql instead).
+      ddl-auto: validate
     properties:
       hibernate:
         format_sql: true
+  flyway:
+    # The docker-compose dev DB already has resources/reservations from the old ddl-auto=update
+    # regime — baseline-on-migrate treats that existing state as "version 0, already applied"
+    # instead of failing on "schema not empty". A fresh DB (Testcontainers) has no baseline
+    # row, so it just runs every migration from V1 as normal.
+    baseline-on-migrate: true
+    baseline-version: "0"
 
 logging:
   pattern:

@@ -72,7 +72,20 @@ Project target: a full enterprise API.
       Full `EXPLAIN ANALYZE`/constraint-creation detail in decisions.md. GIN still to cover.
 - [ ] `EXPLAIN ANALYZE` until natural — started (see above), keep reading plans as more
       queries/indexes get added.
-- [ ] Partitioning (Range, List, Hash).
+- [x] **Partitioning** — `reservations` is `PARTITION BY HASH (resource_id)`, 8 buckets
+      (`V1__partition_reservations_by_resource_hash.sql`). Range by `start_time` was the
+      first instinct (time-series-shaped data) but rejected: `reservations_no_overlap`
+      only enforces within a single partition, and two reservations either side of a
+      month boundary could still overlap in real time while landing in different date
+      partitions — silently defeating the constraint at exactly the boundary it exists
+      to guard. Hash by `resource_id` keeps every reservation for one resource in the
+      same partition regardless of date, so the per-resource invariant stays fully
+      contained, and `findOverlapping`'s `WHERE resource_id = ?` already prunes to one
+      partition. Traded away range-by-date's "drop old month cheaply" archival story.
+      Schema ownership moved from `ddl-auto=update` to **Flyway** in the same change —
+      partitioning has no JPA annotation, same reason the old EXCLUDE-constraint
+      `ApplicationRunner` existed (now folded into the migration). Full rationale in
+      decisions.md.
 - [ ] Replication (Read Replicas, Primary-Replica).
 
 Project target: optimize real queries against millions of generated rows, measure.
