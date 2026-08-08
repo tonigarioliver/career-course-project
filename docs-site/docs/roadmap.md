@@ -44,15 +44,32 @@ Project target: a full enterprise API.
 
 ## Fase 2 (Meses 3-5) — PostgreSQL Avanzado
 
-- [ ] MVCC internals.
-- [ ] Isolation levels (Read Committed, Repeatable Read, Serializable).
-- [ ] Locks, `FOR UPDATE`, deadlocks.
-- [x] **Indexes (Composite)** — `idx_reservations_resource_time` on
-      `(resource_id, start_time, end_time)`, backing `ReservationRepository.findOverlapping`.
-      Measured against 3M seeded rows (`scripts/seed-fase2-data.sql`): **132ms parallel seq
-      scan → 0.12ms bitmap index scan** (~1000x), ~34,000 buffers → 11. Made permanent via
-      `@Table(indexes = @Index(...))` on `Reservation`. Full `EXPLAIN ANALYZE` before/after
-      in decisions.md. BTree/GIN/GiST/Partial still to cover — this was one composite BTree.
+- [x] **MVCC internals / Isolation levels / Locks / `FOR UPDATE`** — reproduced the
+      classic check-then-insert race in `ReservationService.create()` with two real
+      concurrent transactions under Postgres' default Read Committed: both transactions'
+      `SELECT` saw "no overlap" because neither had committed yet, both inserted, both
+      committed — two overlapping reservations. Fixed with two independent layers:
+      `SELECT ... FOR UPDATE` on the `Resource` row (`ResourceRepository.findByIdForUpdate`,
+      `@Lock(PESSIMISTIC_WRITE)`) serializes concurrent `create()` calls for the same
+      resource so the loser sees the winner's committed row and conflicts cleanly; a
+      `reservations_no_overlap` EXCLUDE constraint (GiST, see Indexes below) as the DB-level
+      backstop if the app-level lock is ever bypassed. Verified with a real two-thread
+      `ExecutorService` integration test — no artificial `sleep` needed, the row lock
+      forces the interleaving deterministically. Full before/after in decisions.md.
+      Also confirmed *why not a plain Java lock*: `synchronized`/`ReentrantLock` only
+      hold within one JVM — useless once `booking-service` runs as more than one
+      instance (Fase 6). Serializable isolation and deadlocks still to explore.
+- [x] **Indexes (Composite BTree, GiST, Partial)**
+    - Composite BTree: `idx_reservations_resource_time` on `(resource_id, start_time,
+      end_time)`, backing `ReservationRepository.findOverlapping`. Measured against 3M
+      seeded rows (`scripts/seed-fase2-data.sql`): **132ms parallel seq scan → 0.12ms
+      bitmap index scan** (~1000x), ~34,000 buffers → 11. Made permanent via
+      `@Table(indexes = @Index(...))` on `Reservation`.
+    - GiST + Partial: `reservations_no_overlap` EXCLUDE constraint (see Locks above) is
+      itself backed by a GiST index, restricted to non-cancelled rows via `WHERE` (a
+      partial constraint, same mechanism as a partial index). Needed `btree_gist` to mix
+      a plain equality column (`resource_id`) with a range-overlap column in one index.
+      Full `EXPLAIN ANALYZE`/constraint-creation detail in decisions.md. GIN still to cover.
 - [ ] `EXPLAIN ANALYZE` until natural — started (see above), keep reading plans as more
       queries/indexes get added.
 - [ ] Partitioning (Range, List, Hash).
