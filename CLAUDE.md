@@ -141,6 +141,9 @@ The rest of the roadmap past Kubernetes was not recovered — if the user refere
     validated with `@Valid` also needs `@NotNull` alongside it
     (`@NotNull @Valid CreateResourceRequest request`) to catch a null argument at the
     service boundary.
-- `ddl-auto: update` is a deliberate course-project shortcut (see comment in
-  `application.yml`) — replace with Flyway migrations once Phase 2 (indexes/partitions)
-  of the roadmap starts.
+- Schema is Flyway-owned (`booking-service/src/main/resources/db/migration/`),
+  `ddl-auto: validate` — switched once Fase 2 partitioning needed DDL
+  (`PARTITION BY`, per-partition tables) with no JPA annotation equivalent. The dev
+  docker-compose DB predates Flyway (created by the old `ddl-auto=update`), so
+  `spring.flyway.baseline-on-migrate=true` treats its existing state as already-applied
+  instead of failing on "schema not empty".

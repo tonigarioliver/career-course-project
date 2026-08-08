@@ -11,13 +11,16 @@
 -- Usage (against the docker-compose Postgres, not Testcontainers — this data needs to
 -- persist between sessions):
 --   docker compose up -d postgres
---   mvn -pl booking-service spring-boot:run   # once, so Hibernate (ddl-auto=update)
---                                              # creates the schema — then Ctrl-C it
+--   mvn -pl booking-service spring-boot:run   # once, so Flyway (db/migration) creates
+--                                              # the schema — then Ctrl-C it
 --   docker exec -i career-course-project-postgres-1 psql -U slotwise -d slotwise \
 --       < scripts/seed-fase2-data.sql
 --
 -- Idempotency: none — re-running adds another batch on top. Reset first with:
 --   TRUNCATE reservations, resources RESTART IDENTITY CASCADE;
+-- (`reservations` is partitioned by HASH(resource_id) since V1__partition_reservations_
+-- by_resource_hash.sql — TRUNCATE on the parent cascades to all 8 partitions, no special
+-- handling needed here.)
 
 INSERT INTO resources (name, description, active)
 SELECT 'Room ' || g, 'Generated room ' || g, true

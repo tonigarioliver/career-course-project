@@ -128,10 +128,14 @@ in the index matters here: `resource_id` first because it's an equality filter (
 only use a btree index for a contiguous prefix of equality columns followed by *one*
 range column efficiently; both range columns are still in the index so Postgres can
 apply `Index Cond` on the full expression instead of fetching every row for a plain
-`Filter` recheck. Made permanent in `Reservation.java` via
-`@Table(indexes = @Index(...))` so `ddl-auto=update` creates it on any fresh
-environment, not just this manually-seeded one — confirmed re-running the app doesn't
-try to create a duplicate (same index name already exists, Hibernate skips it).
+`Filter` recheck. Made permanent at the time via `@Table(indexes = @Index(...))` on
+`Reservation.java` so `ddl-auto=update` created it on any fresh environment. **Since
+superseded**: schema ownership moved to Flyway when partitioning landed (see "Partitioning
+`reservations`" below) — the index is now created explicitly by
+`V1__partition_reservations_by_resource_hash.sql`, propagated by Postgres to every
+partition. The `@Table(indexes = ...)` annotation is harmless leftover documentation
+under `ddl-auto=validate` (validate doesn't check index definitions) but no longer the
+thing actually creating it.
 
 ## The `findOverlapping` check-then-insert race (MVCC/Read Committed, and the fix)
 
@@ -228,16 +232,64 @@ per-resource reservations **sequentially** (each one starts where the last one's
 via a window-function running sum) instead of independently at random — zero overlap by
 construction, same realistic volume for index/`EXPLAIN ANALYZE` work.
 
-**Wiring into the app**: no JPA annotation exists for exclusion constraints, so
-`ddl-auto=update` can't create this one. `ReservationOverlapConstraintInitializer`
-(`ApplicationRunner`) runs the `CREATE EXTENSION`/`ALTER TABLE` via raw JDBC on every boot,
-guarded by a `pg_constraint` existence check so it's a no-op after the first run. **Not**
-done via Spring Boot's `schema.sql` mechanism — its script splitter naively cuts on every
-`;`, including the ones inside the constraint's `DO $$ ... $$` block, breaking it into
-invalid fragments (`Unterminated dollar quote`). Raw JDBC sends the whole block as one
-statement, no splitting involved. This is also the trigger CLAUDE.md predicted for
-replacing `ddl-auto=update` with Flyway — noted, not yet acted on (that's a bigger lift than
-this one constraint needed).
+**Wiring into the app, original attempt**: no JPA annotation exists for exclusion
+constraints, so `ddl-auto=update` couldn't create this one.
+`ReservationOverlapConstraintInitializer` (`ApplicationRunner`) ran the `CREATE
+EXTENSION`/`ALTER TABLE` via raw JDBC on every boot, guarded by a `pg_constraint`
+existence check so it was a no-op after the first run. **Not** done via Spring Boot's
+`schema.sql` mechanism — its script splitter naively cuts on every `;`, including the
+ones inside the constraint's `DO $$ ... $$` block, breaking it into invalid fragments
+(`Unterminated dollar quote`). Raw JDBC sends the whole block as one statement, no
+splitting involved.
+
+**Superseded** when Partitioning (below) forced the Flyway move CLAUDE.md had predicted:
+the `ApplicationRunner` is deleted, and `reservations_no_overlap` is now created by
+`V1__partition_reservations_by_resource_hash.sql` alongside the rest of the table's DDL —
+one migration owns the whole table instead of ddl-auto plus a hand-rolled JDBC runner
+patching in what it couldn't express.
+
+## Partitioning `reservations` (Fase 2) — and why it forced the move to Flyway
+
+`PARTITION BY` has no JPA/Hibernate annotation, so it couldn't be bolted onto
+`ddl-auto=update` the way the EXCLUDE constraint's `ApplicationRunner` was — converting an
+existing table to partitioned isn't even something `ALTER TABLE` can do; it has to be
+dropped and recreated. That's real DDL ownership, which is what Flyway is for — this is
+the trigger CLAUDE.md had flagged ("replace with Flyway migrations once Phase 2
+(indexes/partitions) starts"), now acted on. One migration,
+`V1__partition_reservations_by_resource_hash.sql`, now owns `resources` (`CREATE TABLE IF
+NOT EXISTS`, so it's a no-op against the existing docker-compose data) and `reservations`
+(dropped and rebuilt partitioned) end to end, replacing both `ddl-auto=update` and the old
+`ApplicationRunner`. `spring.flyway.baseline-on-migrate=true` treats the docker-compose
+dev DB's pre-Flyway state as already-migrated instead of failing on "schema not empty";
+Testcontainers tests get a fresh DB so V1 just runs in full, no baseline needed.
+
+**Range by `start_time` was the first instinct** — reservations are time-series-shaped
+data, and "drop last year's partition cheaply" is the textbook range-partitioning story.
+Rejected once the constraint interaction was worked through: Postgres only enforces a
+unique/exclusion constraint *within* a single partition — it has no way to see across
+partition boundaries. Two reservations either side of a month boundary (one ending
+2024-01-31 23:30, another starting 2024-02-01 00:00 for the same resource, genuinely
+overlapping if either ran long) would land in *different* date partitions and
+`reservations_no_overlap` would never compare them against each other — silently
+defeated at exactly the boundary case it exists to catch. Postgres does require a
+partitioned table's exclusion constraint to include the partition key column, but
+satisfying that syntactically doesn't make the enforcement correct if the operator on
+that column isn't equality.
+
+**`PARTITION BY HASH (resource_id)`, 8 buckets, fixes this by construction**: hash
+partitioning always sends every row with the same `resource_id` to the same bucket, so
+two reservations for one resource can never be split across partitions regardless of
+their dates — the no-overlap invariant (which is scoped per-resource, not per-date) stays
+fully contained in one partition. `resource_id WITH =` in the EXCLUDE constraint now
+correctly satisfies Postgres' partition-key-inclusion rule *and* is structurally
+sufficient, unlike the range case. Free side benefit: `findOverlapping`'s `WHERE
+resource_id = ?` is an equality predicate on the exact hash key, so Postgres prunes to a
+single one-eighth-sized partition automatically. Traded away: range-by-date's cheap
+archival story (`DROP TABLE reservations_2024_01`) — hash buckets mix every date
+together, so there's no "old partition" to retire.
+
+`8` buckets is a round number, not a sized-to-load decision — course-project scope, no
+real traffic to size against yet.
 
 ## MDC is thread-local — deliberately hand-rolled, not Micrometer Tracing (yet)
 
@@ -564,8 +616,9 @@ prod`) re-declares the same datasource/Keycloak keys as the base `application.ym
 **without** the `${VAR:default}` fallback — `${DB_HOST}` instead of
 `${DB_HOST:localhost}`. Missing an env var in a real deploy now fails Spring's property
 resolution at startup instead of silently booting against `localhost`/the dev Keycloak.
-Also flips `ddl-auto` to `validate` (Hibernate never mutates a prod schema — that's a
-migration tool's job, Flyway once Phase 2 lands) and turns off `format_sql`.
+Also flips `ddl-auto` to `validate` (Hibernate never mutates a prod schema — that's
+Flyway's job, see "Partitioning `reservations`" for when the default profile got the
+same treatment) and turns off `format_sql`.
 
 ## `SecurityFilterChain` bean needs `@ConditionalOnWebApplication`
 
@@ -601,3 +654,37 @@ So `throws Exception` on the bean method is dead: SonarLint correctly flags it
 it's copy-pasted boilerplate from an older API version. Removed. **When copying a
 Spring Security config snippet from docs/tutorials, don't assume `throws Exception`
 is still required — check against the actual major version in `pom.xml`.**
+
+## Locking without a natural FK to hang the lock on (forward note for Fase 3)
+
+`ReservationService.create()`'s race fix (`SELECT ... FOR UPDATE` on `resources` +
+`reservations_no_overlap` EXCLUDE constraint) works because the FK gives every
+concurrent transaction the same row to fight over — the `resources` row is a natural
+mutex. Discussed what to do when that FK doesn't exist (a uniqueness/invariant on a
+table with no parent row to lock):
+
+- **Constraint + catch** (`UNIQUE`/`EXCLUDE`, same style as `reservations_no_overlap`)
+  when the invariant *can* be expressed in SQL — optimistic, cheapest, DB is the
+  single source of truth. Catch `DataIntegrityViolationException`, map to the
+  business exception.
+- **`pg_advisory_xact_lock(hashtext(key))`** when it can't be expressed as a
+  constraint (the rule spans multiple checks/tables) but is still reducible to one
+  business key — same mental model as `FOR UPDATE`, but the "row" is invented instead
+  of real. No disk I/O, auto-released at commit/rollback. Caveat: hash collisions
+  cause unrelated keys to block each other (rare), and it's app-discipline, not
+  schema-enforced — every write path has to remember to take it.
+- **`SERIALIZABLE` isolation + retry on `40001`** when the rule is too open for a
+  single key (several independent checks) — Postgres detects the generic conflict
+  between concurrent transactions without needing a constraint or an explicit lock,
+  at the cost of a retry loop in the app.
+
+None of these three survive past a single Postgres instance — advisory locks and
+row locks alike live inside one backend's lock manager. **Partitioning** (next Fase 2
+subtopic) doesn't break this, it's still one instance underneath. What does is
+genuinely **multiple databases** (sharding, multi-region) — that's what Fase 3's
+**Distributed Locks (Redisson)** item is for. Flagged nuance to carry into that
+work: a Redis distributed lock isn't a drop-in replacement for an advisory lock —
+it needs a lease/TTL (crashed holder must not block forever) and a fencing token
+(holder whose lease already expired must not still be allowed to act as if it held
+the lock) — the classic Redlock pitfalls, absent from the single-instance Postgres
+version because Postgres releases the lock itself on backend disconnect.

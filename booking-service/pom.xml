@@ -44,6 +44,25 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Flyway takes over schema ownership from ddl-auto now that partitioning needs DDL
+             (PARTITION BY, per-partition tables) with no JPA annotation equivalent.
+             spring-boot-flyway is required too, not just flyway-core: Spring Boot 4 split its
+             old monolithic spring-boot-autoconfigure jar into one module per feature, and
+             FlywayAutoConfiguration moved into this dedicated module — without it Flyway never
+             even gets considered during auto-configuration, it silently never runs. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

@@ -9,7 +9,6 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -17,13 +16,12 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+// Table DDL (partitioning, the composite PK it requires, indexes, the no-overlap EXCLUDE
+// constraint) lives in db/migration/V1__partition_reservations_by_resource_hash.sql —
+// Flyway owns this table's schema, ddl-auto is validate-only. See decisions.md
+// "Partitioning reservations" and "Indexing findOverlapping".
 @Entity
-@Table(
-        name = "reservations",
-        // Backs ReservationRepository.findOverlapping's WHERE resource_id = ? AND start_time < ?
-        // AND end_time > ?. Measured: 132ms parallel seq scan over 3M rows -> 0.12ms bitmap index
-        // scan (see decisions.md "Indexing findOverlapping" for the full EXPLAIN ANALYZE before/after).
-        indexes = @Index(name = "idx_reservations_resource_time", columnList = "resource_id, start_time, end_time"))
+@Table(name = "reservations")
 @Getter
 @Setter
 @NoArgsConstructor
