@@ -9,6 +9,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -17,7 +18,12 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "reservations")
+@Table(
+        name = "reservations",
+        // Backs ReservationRepository.findOverlapping's WHERE resource_id = ? AND start_time < ?
+        // AND end_time > ?. Measured: 132ms parallel seq scan over 3M rows -> 0.12ms bitmap index
+        // scan (see decisions.md "Indexing findOverlapping" for the full EXPLAIN ANALYZE before/after).
+        indexes = @Index(name = "idx_reservations_resource_time", columnList = "resource_id, start_time, end_time"))
 @Getter
 @Setter
 @NoArgsConstructor
