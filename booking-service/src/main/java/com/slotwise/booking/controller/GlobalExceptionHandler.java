@@ -7,6 +7,7 @@ import jakarta.validation.ConstraintViolationException;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -52,5 +53,17 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleBadRequest(IllegalArgumentException ex) {
         return ResponseEntity.badRequest()
                 .body(ApiErrorResponse.builder().message(ex.getMessage()).build());
+    }
+
+    // A record's compact constructor (e.g. CreateReservationRequest's startTime/endTime check)
+    // runs during Jackson's @RequestBody deserialization, before @Valid ever gets a chance to
+    // run — so Spring wraps whatever it throws in HttpMessageNotReadableException instead of
+    // letting it surface as the IllegalArgumentException handled above. Unwrap it here so both
+    // paths return the same ApiErrorResponse shape.
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiErrorResponse> handleUnreadableBody(HttpMessageNotReadableException ex) {
+        final var cause = ex.getMostSpecificCause();
+        final var message = cause instanceof IllegalArgumentException ? cause.getMessage() : "Malformed request body";
+        return ResponseEntity.badRequest().body(ApiErrorResponse.builder().message(message).build());
     }
 }
