@@ -349,6 +349,105 @@ is unordered, silently plan-dependent (and data-shape-dependent) when it isn't. 
 future paginated query gets an explicit `ORDER BY` on principle, not just when a slow
 case is caught by hand.
 
+## Deadlocks and `SERIALIZABLE` (Fase 2) — the two gaps left after the MVCC race fix
+
+The MVCC race fix (`FOR UPDATE` + `reservations_no_overlap`) and its "Locking without a
+natural FK" follow-up left two items explicitly flagged as unexplored: deadlocks, and
+`SERIALIZABLE` isolation. Both reproduced with raw concurrent `psql` sessions against the
+real docker-compose primary (same style as the original MVCC race demo) — no app code
+involved, these are pure Postgres mechanics.
+
+### Deadlock: two transactions, opposite lock order
+
+```sql
+-- Session A                                    -- Session B (started ~same time)
+BEGIN;                                          BEGIN;
+UPDATE resources SET name = name WHERE id=1;    UPDATE resources SET name = name WHERE id=2;
+SELECT pg_sleep(2);                             SELECT pg_sleep(2);
+UPDATE resources SET name = name WHERE id=2;    UPDATE resources SET name = name WHERE id=1;
+COMMIT;                                         COMMIT;
+```
+
+Each session locks a different row first (both succeed immediately, no contention yet),
+then after the sleep each tries to lock the *other* row — the one the other session
+already holds. Classic circular wait: A holds row 1 waiting for row 2, B holds row 2
+waiting for row 1. Postgres' deadlock detector runs every `deadlock_timeout` (1s
+default), builds the actual wait-for graph, finds the cycle, and picks one transaction as
+the victim:
+
+```
+ERROR:  deadlock detected
+DETAIL:  Process 331 waits for ShareLock on transaction 813; blocked by process 338.
+Process 338 waits for ShareLock on transaction 812; blocked by process 331.
+HINT:  See server log for query details.
+```
+
+Session A got aborted (automatic `ROLLBACK`), session B proceeded and committed normally.
+**No code anywhere prevents this** — it's a structural consequence of two transactions
+locking two shared resources in opposite order, the textbook deadlock shape from any
+concurrency course, not specific to Postgres or this schema. The only real defense is
+discipline (always acquire locks in the same order across the whole codebase — e.g.
+always lock the lower `id` first) or shortening transactions so the window is small.
+`findByIdForUpdate`'s single-lock pattern (one `FOR UPDATE` per transaction, never two)
+is deadlock-proof *by construction* — there's nothing to form a cycle with a single lock
+— which is worth calling out as the actual reason it was never hit here, not luck.
+
+### `SERIALIZABLE`: catches what `FOR UPDATE` structurally can't — write skew
+
+`FOR UPDATE` only helps when both transactions **touch the same row** — that's what makes
+there be something to lock. **Write skew** is the classic case where two transactions
+touch *different* rows, so no lock ever contends, yet the two commits together violate an
+invariant that depends on both rows at once.
+
+Constructed a minimal repro: one resource, two `CONFIRMED` reservations, invariant "never
+leave a resource with zero active reservations" (an app-level rule for this demo, not a
+DB constraint — the point is showing what isolation level alone can/can't enforce it):
+
+```sql
+-- Both sessions, concurrently, under default Read Committed:
+BEGIN;
+SELECT count(*) FROM reservations WHERE resource_id = 1015 AND status = 'CONFIRMED';
+-- both see 2 here — neither has committed yet
+SELECT pg_sleep(1);
+UPDATE reservations SET status = 'CANCELLED' WHERE id = <mine>;  -- different row each
+COMMIT;
+```
+
+Under Read Committed: **both commit with no error.** Final state: zero active
+reservations, invariant silently violated — and no lock was ever contended, so `FOR
+UPDATE` on either row wouldn't have helped even in principle.
+
+Same script, `BEGIN ISOLATION LEVEL SERIALIZABLE` instead:
+
+```
+ERROR:  could not serialize access due to read/write dependencies among transactions
+DETAIL:  Reason code: Canceled on identification as a pivot, during write.
+HINT:  The transaction might succeed if retried.
+```
+
+One session committed, the other rolled back automatically. Final state: exactly one
+reservation still `CONFIRMED` — invariant preserved. Postgres' `SERIALIZABLE` (**SSI**,
+Serializable Snapshot Isolation) doesn't lock rows up front — it tracks each
+transaction's actual reads and writes and detects the specific dependency *pattern*
+(a read-write anti-dependency cycle) that can only occur if the outcome isn't equivalent
+to running the transactions one at a time in *some* order, then aborts one to force that
+guarantee. This is strictly more than Postgres' `REPEATABLE READ` (snapshot isolation)
+catches — snapshot isolation alone permits exactly this write-skew anomaly, which is why
+Postgres names the levels separately even though `REPEATABLE READ` also uses one snapshot
+per transaction.
+
+**The real cost, and why this isn't free to reach for everywhere**: the aborted
+transaction returns SQLSTATE `40001` (`serialization_failure`) — the HINT is not
+decorative, the app is **required** to catch it and retry the whole transaction from the
+top (not just the failed statement), or the "loser" simply vanishes with an error the user
+sees. Nothing here retries automatically. This is exactly the trade-off flagged in
+"Locking without a natural FK" (above): `SERIALIZABLE` + retry is the right tool
+specifically when the invariant is too open to reduce to one lockable row (spans several
+independent checks/tables) — for `booking-service`'s actual overlap check, `FOR UPDATE`
+on the single `resources` row it naturally hangs off is cheaper and already sufficient,
+so `SERIALIZABLE` wasn't retrofitted there. Flagged for future work that doesn't have a
+natural single row to lock.
+
 ## Streaming replication (Fase 2) — primary + read replica, and the read/write split
 
 `docker-compose.yml` gained `postgres-replica`, a real Postgres **hot standby** streaming

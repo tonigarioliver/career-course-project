@@ -58,7 +58,15 @@ Project target: a full enterprise API.
       forces the interleaving deterministically. Full before/after in decisions.md.
       Also confirmed *why not a plain Java lock*: `synchronized`/`ReentrantLock` only
       hold within one JVM — useless once `booking-service` runs as more than one
-      instance (Fase 6). Serializable isolation and deadlocks still to explore.
+      instance (Fase 6).
+- [x] **Deadlocks and `SERIALIZABLE`** — reproduced a real deadlock (two sessions locking
+      two rows in opposite order; Postgres' detector found the cycle and aborted one with
+      `deadlock detected`) and a write-skew anomaly (two transactions touching *different*
+      rows, no lock ever contended, that together silently violate an invariant under
+      Read Committed but get one aborted with `40001 serialization_failure` under
+      `SERIALIZABLE`). Both against the real primary, no app code involved — pure Postgres
+      mechanics. Full detail (and why `SERIALIZABLE` wasn't retrofitted onto
+      `ReservationService`, which already has a single lockable row) in decisions.md.
 - [x] **Indexes (Composite BTree, GiST, Partial)**
     - Composite BTree: `idx_reservations_resource_time` on `(resource_id, start_time,
       end_time)`, backing `ReservationRepository.findOverlapping`. Measured against 3M
