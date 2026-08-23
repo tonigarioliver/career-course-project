@@ -291,6 +291,64 @@ together, so there's no "old partition" to retire.
 `8` buckets is a round number, not a sized-to-load decision — course-project scope, no
 real traffic to size against yet.
 
+## `EXPLAIN ANALYZE` on paginated reads: a missing `ORDER BY` picked a bad plan
+
+`ReservationRepository.findSummariesByResourceId` (backs the "list a resource's
+reservations, paginated" endpoint) had no `ORDER BY` — a correctness bug on its own
+(two calls for the same page can return different rows once concurrent writes are
+happening), caught while continuing the "keep reading plans as more queries get
+added" `EXPLAIN ANALYZE` item.
+
+Comparing the same `LIMIT 20 OFFSET 0` query across different `resource_id` values
+against the 3M-row seed:
+
+```
+resource_id=1   → Index Scan, 0.48ms,     7 buffers
+resource_id=999 → Index Scan, 0.03ms,     4 buffers
+resource_id=500 → Seq Scan,   9.6ms,   1548 buffers   ← picked a different plan, 20-200x worse
+```
+
+`EXPLAIN (ANALYZE, BUFFERS)` on the `resource_id=500` case:
+
+```
+ Limit  (cost=0.00..49.49 rows=20 width=51) (actual time=14.622..14.630 rows=20 loops=1)
+   Buffers: shared read=1551
+   ->  Seq Scan on reservations_p3 r  (cost=0.00..7391.00 rows=2987 width=51) (actual time=14.620..14.622 rows=20 loops=1)
+         Filter: (resource_id = 500)
+         Rows Removed by Filter: 150000
+```
+
+**Root cause**: with no `ORDER BY`, the planner's cost model for `LIMIT` on top of a
+`Seq Scan` assumes matching rows are spread *uniformly* through the table, and
+estimates it'll hit 20 matches after scanning only a small, proportional slice —
+cheaper on paper than the index. That assumption is false here: `scripts/seed-fase2-
+data.sql` inserts all 3,000 rows for one resource back-to-back (`CROSS JOIN
+generate_series` iterates resources on the outer loop), so the data is physically
+clustered by `resource_id`, not uniform. For most `resource_id` values the estimate
+still loses to the index and Postgres picks it anyway (`1`, `999` above); for others
+(`500`, landing in partition `p3`) the flawed estimate wins the cost comparison, and
+the *actual* execution has to walk almost the entire partition
+(`Rows Removed by Filter: 150000`) before finding 20 matches — the uniform-distribution
+assumption fails hardest exactly when a resource's rows happen to sit late in that
+partition's physical scan order.
+
+**Fix**: add `ORDER BY r.startTime, r.id` to the query. Two independent reasons, one
+change:
+
+1. **Correctness** — deterministic pagination (also a tiebreaker on `id` in case two
+   reservations share a `startTime`, matching the primary key's own tiebreak use here).
+2. **Performance** — it matches `idx_reservations_resource_time`'s leading columns
+   (`resource_id, start_time, end_time`), so the planner can satisfy the filter *and*
+   the order off that one index (`Incremental Sort` over an `Index Scan`) instead of
+   gambling on a `Seq Scan`'s early-exit estimate. Re-measured `resource_id=500`
+   after the fix: **9.6ms → 0.12ms**, 1548 buffers → 16.
+
+Lesson to carry forward: a `LIMIT` with no `ORDER BY` is a plan the optimizer is
+*guessing* at based on a uniformity assumption — safe when the underlying data really
+is unordered, silently plan-dependent (and data-shape-dependent) when it isn't. Any
+future paginated query gets an explicit `ORDER BY` on principle, not just when a slow
+case is caught by hand.
+
 ## MDC is thread-local — deliberately hand-rolled, not Micrometer Tracing (yet)
 
 `CorrelationIdFilter` (`OncePerRequestFilter`) reads an inbound `X-Correlation-Id`
