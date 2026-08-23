@@ -22,6 +22,10 @@ spring:
       hibernate:
         format_sql: true
   flyway:
+    # Flyway migrates the primary (autowires the @Primary DataSource bean too, but that's
+    # harmless: migrations run outside any @Transactional(readOnly = true) method, so
+    # ReplicationRoutingDataSource's default lookup key is "primary" anyway).
+
     # The docker-compose dev DB already has resources/reservations from the old ddl-auto=update
     # regime — baseline-on-migrate treats that existing state as "version 0, already applied"
     # instead of failing on "schema not empty". A fresh DB (Testcontainers) has no baseline
@@ -38,3 +42,10 @@ slotwise:
   reservation:
     min-duration-minutes: 15
     max-duration-minutes: 480
+  datasource:
+    # DataSourceConfig routes every @Transactional(readOnly = true) method's queries here
+    # instead of the primary — the docker-compose hot standby (postgres-replica, port 5433).
+    replica:
+      url: jdbc:postgresql://${DB_REPLICA_HOST:localhost}:${DB_REPLICA_PORT:5433}/${DB_NAME:slotwise}
+      username: ${DB_USER:slotwise}
+      password: ${DB_PASSWORD:slotwise}

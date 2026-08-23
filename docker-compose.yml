@@ -9,6 +9,24 @@ services:
       - "5432:5432"
     volumes:
       - slotwise-postgres:/var/lib/postgresql/data
+      # Only runs on a fresh (empty) data dir — see postgres/primary-init.sh for why.
+      - ./postgres/primary-init.sh:/docker-entrypoint-initdb.d/primary-init.sh:ro
+
+  # Streaming replication read replica — Fase 2 "Replication (Read Replicas,
+  # Primary-Replica)". Hot standby: read-only, continuously replaying the primary's WAL.
+  # See postgres/replica-entrypoint.sh for how the initial clone + standby signal work.
+  postgres-replica:
+    image: postgres:17
+    entrypoint: ["/replica-entrypoint.sh"]
+    environment:
+      PGDATA: /var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    volumes:
+      - slotwise-postgres-replica:/var/lib/postgresql/data
+      - ./postgres/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    depends_on:
+      - postgres
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
@@ -23,3 +41,4 @@ services:
 
 volumes:
   slotwise-postgres:
+  slotwise-postgres-replica:

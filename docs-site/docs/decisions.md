@@ -349,6 +349,101 @@ is unordered, silently plan-dependent (and data-shape-dependent) when it isn't. 
 future paginated query gets an explicit `ORDER BY` on principle, not just when a slow
 case is caught by hand.
 
+## Streaming replication (Fase 2) — primary + read replica, and the read/write split
+
+`docker-compose.yml` gained `postgres-replica`, a real Postgres **hot standby** streaming
+the primary's WAL — not a second independent database, a continuous physical replay of it.
+Two pieces, `postgres/primary-init.sh` and `postgres/replica-entrypoint.sh` (the official
+image has no env-var knob for this, so it's done by hand, the same way a managed Postgres
+does it under the hood):
+
+- **Primary**: a `replicator` role with the `REPLICATION` privilege (a distinct bit from
+  `SUPERUSER`/`CREATEDB` — a replica connecting with it speaks the replication protocol,
+  not SQL) plus a `pg_hba.conf` line allowing a `replication`-type connection (a pseudo-
+  database in `pg_hba.conf`, not a real one — how Postgres' own auth distinguishes "stream
+  WAL" from "run queries"). Only runs automatically via `docker-entrypoint-initdb.d` on a
+  *fresh* data dir; since the running dev volume already had 3M rows from the earlier
+  `EXPLAIN ANALYZE` seed, this session's primary got the equivalent applied by hand
+  (`CREATE ROLE` + append `pg_hba.conf` + `pg_reload_conf()`).
+- **Replica**: on first boot with an empty data dir, `pg_basebackup -R` — a full **physical**
+  (byte-for-byte) clone of the primary over the replication protocol, *not* `pg_dump`
+  (logical, per-object SQL) — WAL records are physical page diffs, so replaying them needs
+  a byte-identical starting point. `-R` writes `primary_conninfo` into
+  `postgresql.auto.conf` (how to keep streaming) and creates `standby.signal`, an empty
+  marker file whose mere presence is what tells Postgres to come up in recovery/hot-standby
+  mode instead of as a normal read-write primary — that file is the entire mechanism
+  behind "this is a replica," not any data difference.
+
+Verified end-to-end against the real containers (not a unit test): replica's
+`pg_is_in_recovery() = t`; an `INSERT` attempted directly on the replica fails with
+`cannot execute INSERT in a read-only transaction`; an `INSERT` on the primary is visible
+on the replica within ~1s via `started streaming WAL from primary`.
+
+### Routing the app's reads to the replica
+
+`DataSourceConfig` + `ReplicationRoutingDataSource` (`config` package) wire two real
+`HikariDataSource` pools — primary and replica (`slotwise.datasource.replica.*`) — behind
+one `AbstractRoutingDataSource` (spring-jdbc, already on the classpath — no new
+dependency), whose `determineCurrentLookupKey()` reads
+`TransactionSynchronizationManager.isCurrentTransactionReadOnly()`: `"replica"` inside a
+`@Transactional(readOnly = true)` method, `"primary"` otherwise (including outside any
+transaction — Flyway migrations at startup, etc.). `ResourceService`/`ReservationService`
+already had `readOnly = true` on their read methods from Fase 1's validation work, so no
+service code changed at all — the routing decision rides entirely on an annotation that
+was already there for a different reason.
+
+**Must be wrapped in `LazyConnectionDataSourceProxy`** (also spring-jdbc, no new
+dependency) — not optional, and easy to get wrong silently. `AbstractPlatformTransaction-
+Manager.getTransaction()` calls `doBegin()` (which asks the `DataSource` for a real
+connection) *before* `prepareSynchronization()` (which is what actually sets the read-only
+flag `determineCurrentLookupKey()` reads). Routing directly against the raw
+`AbstractRoutingDataSource` would resolve the lookup key too early — before the flag for
+*this* transaction exists — and silently use whatever the previous transaction on that
+thread left behind, or the default. `LazyConnectionDataSourceProxy` defers the real
+`getConnection()` call until the first statement actually executes, by which point the
+flag is reliably in place.
+
+### The real bug this caught: `@ServiceConnection` doesn't rewrite `spring.datasource.*`
+
+First implementation of `DataSourceConfig` built the primary pool from its own
+`@ConfigurationProperties("spring.datasource")` bean — reads the plain `application.yml`
+defaults directly. Worked fine standalone. Broke `ReservationServiceIntegrationTest`
+silently and dangerously: `@ServiceConnection` on the test's Testcontainers field does
+**not** rewrite the `spring.datasource.*` property values — it registers a
+`JdbcConnectionDetails` bean that only Boot's own `DataSourceAutoConfiguration` consults.
+A hand-rolled `DataSourceProperties` bean has no idea that bean exists, so it kept reading
+`application.yml`'s plain default (`localhost:5432`, the real docker-compose dev
+database) — the "primary" pool in the test was silently the real dev DB, not the ephemeral
+Testcontainers one.
+
+**Why it was hard to see**: the test didn't error — it *passed the wrong way* at first,
+then failed confusingly on a different assertion once a read (`listByResource`, routed to
+the correctly-Testcontainers-wired replica pool) couldn't see what the write (silently
+against the real dev DB) had just inserted. Caught by adding a raw JDBC check straight
+against `postgres.getJdbcUrl()` (bypassing Spring/Hikari entirely) and seeing zero rows
+where the app had just logged a successful insert — proof the insert landed somewhere
+else. `Database info: Database JDBC URL [...]` in the startup log (always logged by
+Hibernate at `INFO`) confirmed it: `jdbc:postgresql://localhost:5432/slotwise`, not the
+Testcontainers container's random port. Every test run before the fix had been quietly
+writing test resources/reservations into the real dev database (cleaned up afterward:
+`DELETE ... WHERE id > 1000`, since the real seed data tops out at id 1000/1000000-ish).
+
+**Fix**: build the primary `DataSource` from an injected `JdbcConnectionDetails` bean
+instead of properties directly, plus a `@ConditionalOnMissingBean(JdbcConnectionDetails
+.class)` fallback bean (wrapping `DataSourceProperties.determineUrl()`/etc.) for when
+nothing else — no `@ServiceConnection` — provides one. Boot's own `DataSourceAuto-
+Configuration` would normally supply that fallback for free, but only when it's the one
+creating the `DataSource` bean; once *any* `DataSource` bean exists in the context (ours),
+Boot's whole autoconfiguration class backs off, fallback included — hence rolling one by
+hand here. This is the general lesson, not specific to replication: **any custom
+`DataSource` bean that might run under a Testcontainers `@ServiceConnection` test must
+consume `JdbcConnectionDetails`, never `spring.datasource.*` properties directly** — the
+replica pool here is the one exception, deliberately, since there's no real streaming
+replica in the Testcontainers test (see `ReservationServiceIntegrationTest`'s
+`@DynamicPropertySource` pointing "replica" at the same Testcontainers instance too — the
+test is about `ReservationService`'s logic, not about proving replication itself, which is
+already verified by hand above against the real containers).
+
 ## MDC is thread-local — deliberately hand-rolled, not Micrometer Tracing (yet)
 
 `CorrelationIdFilter` (`OncePerRequestFilter`) reads an inbound `X-Correlation-Id`

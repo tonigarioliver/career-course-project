@@ -91,7 +91,17 @@ Project target: a full enterprise API.
       partitioning has no JPA annotation, same reason the old EXCLUDE-constraint
       `ApplicationRunner` existed (now folded into the migration). Full rationale in
       decisions.md.
-- [ ] Replication (Read Replicas, Primary-Replica).
+- [x] **Replication (Read Replicas, Primary-Replica)** — real Postgres streaming
+      replication in `docker-compose.yml` (`postgres-replica`, a `pg_basebackup`-cloned hot
+      standby streaming the primary's WAL), plus the app routing every
+      `@Transactional(readOnly = true)` call to it via a `AbstractRoutingDataSource` +
+      `LazyConnectionDataSourceProxy` (`DataSourceConfig`). Verified end-to-end against the
+      real containers: replica rejects writes, a primary write appears on it within ~1s,
+      and a real authenticated request measurably lands on the replica's connection pool.
+      Caught and fixed a real bug along the way — `@ServiceConnection` in the integration
+      test doesn't rewrite `spring.datasource.*`, so the first cut of the wiring silently
+      wrote test data into the real dev database instead of the ephemeral Testcontainers
+      one. Full detail in decisions.md.
 
 Project target: optimize real queries against millions of generated rows, measure.
 
