@@ -70,8 +70,13 @@ Project target: a full enterprise API.
       partial constraint, same mechanism as a partial index). Needed `btree_gist` to mix
       a plain equality column (`resource_id`) with a range-overlap column in one index.
       Full `EXPLAIN ANALYZE`/constraint-creation detail in decisions.md. GIN still to cover.
-- [ ] `EXPLAIN ANALYZE` until natural — started (see above), keep reading plans as more
-      queries/indexes get added.
+- [x] `EXPLAIN ANALYZE` until natural — beyond `findOverlapping` (above), caught a real
+      bug in `findSummariesByResourceId`'s pagination: no `ORDER BY` let the planner's
+      uniform-distribution assumption for `LIMIT` pick a `Seq Scan` for some `resource_id`
+      values (data is physically clustered by resource, not uniform) — 9.6ms/1548 buffers
+      vs 0.12ms/16 for the same query once `ORDER BY r.startTime, r.id` let it reliably
+      use the index instead. Also fixed a real non-determinism bug (pagination without
+      an explicit order). Full detail in decisions.md.
 - [x] **Partitioning** — `reservations` is `PARTITION BY HASH (resource_id)`, 8 buckets
       (`V1__partition_reservations_by_resource_hash.sql`). Range by `start_time` was the
       first instinct (time-series-shaped data) but rejected: `reservations_no_overlap`
