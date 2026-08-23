@@ -24,6 +24,8 @@ import org.springframework.core.convert.ConversionService;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.data.domain.Pageable;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -45,6 +47,21 @@ class ReservationServiceIntegrationTest {
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17");
+
+    // @ServiceConnection above only wires spring.datasource.* (what DataSourceConfig's
+    // primaryDataSource reads) — it has no idea about slotwise.datasource.replica.*, our
+    // own property prefix, so without this a @Transactional(readOnly = true) call (e.g.
+    // listByResource) would try the real localhost:5433 default and fail outside an
+    // environment that happens to have a docker-compose replica running. There's no real
+    // standby to test replication itself here (that's verified by hand against the actual
+    // docker-compose primary+replica) — this test is about ReservationService's logic, so
+    // pointing "replica" at the same Testcontainers instance is the correct test double.
+    @DynamicPropertySource
+    static void replicaDataSourceProperties(final DynamicPropertyRegistry registry) {
+        registry.add("slotwise.datasource.replica.url", postgres::getJdbcUrl);
+        registry.add("slotwise.datasource.replica.username", postgres::getUsername);
+        registry.add("slotwise.datasource.replica.password", postgres::getPassword);
+    }
 
     private final ResourceService resourceService;
     private final ReservationService reservationService;
