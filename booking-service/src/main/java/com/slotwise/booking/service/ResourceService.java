@@ -9,6 +9,7 @@ import jakarta.validation.constraints.NotNull;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.data.domain.Page;
@@ -39,9 +40,9 @@ public class ResourceService {
     }
 
     // Cache-Aside: miss falls through to the DB and populates the cache; a hit never
-    // touches resourceRepository. update()/delete() evict below rather than write through,
-    // so a stale entry can only live until the next write to that id or the TTL (see
-    // application.yml spring.cache.redis.time-to-live).
+    // touches resourceRepository. delete() below evicts (nothing to put); update() below
+    // writes through instead — either way a stale entry can't outlive the TTL (see
+    // application.yml spring.cache.redis.time-to-live) even if a write path were ever missed.
     @Cacheable("resources")
     @Transactional(readOnly = true)
     public ResourceDto getById(@NotNull Long id) {
@@ -53,7 +54,9 @@ public class ResourceService {
         return this.resourceRepository.findAllSummaries(pageable);
     }
 
-    @CacheEvict(value = "resources", key = "#id")
+    // Write-Through: the new DTO is written into Redis in this same call (not just evicted),
+    // so a read right after update() never has to fall back to the DB to see it.
+    @CachePut(value = "resources", key = "#id")
     @Transactional
     public ResourceDto update(@NotNull Long id, @NotNull @Valid CreateResourceRequest request) {
         final Resource resource = this.findOrThrow(id);
