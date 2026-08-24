@@ -57,6 +57,17 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- Fase 3 "Distributed Locks": plain redisson, not redisson-spring-boot-starter —
+             the starter's autoconfiguration predates Spring Boot 4 (this project's history of
+             Boot-4 package moves says guessing its Boot-4 compat is a bad bet), and a single
+             RedissonClient @Bean (see RedissonConfig) is less code than pulling in a starter
+             just to get that one bean. -->
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson</artifactId>
+            <version>3.50.0</version>
+        </dependency>
+
         <!-- Flyway takes over schema ownership from ddl-auto now that partitioning needs DDL
              (PARTITION BY, per-partition tables) with no JPA annotation equivalent.
              spring-boot-flyway is required too, not just flyway-core: Spring Boot 4 split its

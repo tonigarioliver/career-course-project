@@ -26,9 +26,11 @@ import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -47,6 +49,14 @@ class ReservationServiceIntegrationTest {
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17");
+
+    // ResourceService (used to create resources below) now needs a real RedissonClient
+    // bean (Fase 3 stampede guard) — without this, RedissonConfig would eagerly try to
+    // connect to the application.yml default of localhost:6379 and fail.
+    @Container
+    @ServiceConnection("redis")
+    static GenericContainer<?> redis = new GenericContainer<>(DockerImageName.parse("redis:7"))
+            .withExposedPorts(6379);
 
     // @ServiceConnection above only wires spring.datasource.* (what DataSourceConfig's
     // primaryDataSource reads) — it has no idea about slotwise.datasource.replica.*, our
