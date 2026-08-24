@@ -960,3 +960,30 @@ table polled by a worker, or a real broker) — which is exactly Fase 4's Kafka/
 territory, not something worth half-building with ad-hoc Redis pub/sub now. Revisit once
 Kafka is in the picture; until then Write-Through covers every write path this project
 actually has.
+
+## Distributed lock (Redisson): cache-stampede protection, not the reservation race
+
+Fase 3's "Distributed Locks (Redisson)" item could have been bolted onto
+`ReservationService.create()`'s overlap check, but that's already solved at the
+Postgres level (`FOR UPDATE` + `EXCLUDE` constraint, see the locking note above) and a
+Redis lock would be a *weaker* guarantee sitting on top of a stronger one — regressive,
+not additive. The genuine, non-contrived need in this codebase is **cache-stampede
+protection**: `ResourceService.getById`'s Redis-backed cache (this same Fase 3, Cache-Aside)
+is shared by every instance, so when an entry's TTL expires, concurrent requests landing on
+*different* instances can all see the miss at once and all reload from Postgres together.
+
+`@Cacheable(sync = true)` — Spring's native fix — only serializes callers within one JVM;
+each instance still has its own local lock, so it doesn't stop the fleet-wide version of
+this race. Worse, composing it with an external lock doesn't work cleanly: `@Cacheable`'s
+own cache-put runs *after* the annotated method returns, which is after a lock taken
+inside that method would already be released — so the next waiter could still see a miss.
+`CacheStampedeGuard` (generic, not resource-specific — `getOrLoad(cacheName, key, type,
+loader)`) manages the cache by hand instead: a Redisson lock keyed per `(cacheName, key)`,
+the cache re-checked immediately after acquiring it (another instance may have already
+populated it while this one waited), and the DB load's result put into the cache *before*
+releasing the lock — the ordering `@Cacheable` can't give. A caller that can't get the
+lock within 2s loads directly rather than blocking indefinitely (a possible duplicate DB
+read beats an unbounded wait); the lock auto-releases after 5s if its holder crashes
+mid-load. Tested with real concurrent threads racing into `getOrLoad` for a never-cached
+key — without the lock every one of them would run the loader, with it only the winner
+does.

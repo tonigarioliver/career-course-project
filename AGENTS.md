@@ -54,6 +54,13 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   unless the builder's `.enableUnsafeDefaultTyping()` is set — see `CacheConfig`. Fine
   for a Redis instance only this app writes to; would need
   `.enableDefaultTyping(validator)` with an allowlist if Redis were shared/untrusted.
+- **`@ServiceConnection` wires a `RedisConnectionDetails`/`DataRedisConnectionDetails` bean,
+  not `spring.data.redis.host`/`port` properties.** A `@Value("${spring.data.redis.port}")`
+  in a test still reads the `application.yml` default, missing the Testcontainers random
+  port — `RedissonConfig` connects to `localhost:6379` and fails. Fixed by injecting
+  `DataRedisConnectionDetails` (`org.springframework.boot.data.redis.autoconfigure` in Boot
+  4 — yet another per-feature package move, see above) and reading
+  `.getStandalone().getHost()/.getPort()` instead of the properties directly.
 - **`ConversionService` is only auto-registered in a web context.** `ResourceService`/
   `ReservationService` inject `ConversionService` to run the `@Component Converter<...>`
   beans; that bean only exists in production because `WebMvcAutoConfiguration` creates

@@ -26,10 +26,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-// Verifies the caching wiring end to end (real Redis via Testcontainers, not a mock
-// cache): first getById() is a Cache-Aside miss that hits the repository, second is
-// served from Redis without touching it; update() is Write-Through, so the DTO it
-// returns is already what a following getById() serves, again without a repository hit.
+// Verifies ResourceService's caching wiring end to end (real Redis via Testcontainers, not
+// a mock cache): first getById() is a Cache-Aside miss that hits the repository, second is
+// served from Redis without touching it; update() is Write-Through, so the DTO it returns
+// is already what a following getById() serves, again without a repository hit.
+// CacheStampedeGuardTest covers the concurrent-miss/lock behavior generically.
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class ResourceServiceCacheTest {
