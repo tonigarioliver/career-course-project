@@ -44,6 +44,19 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Fase 3 "Redis": Cache-Aside via Spring's cache abstraction, backed by Redis
+             instead of a hand-rolled get-or-load. spring-boot-starter-cache brings the
+             @EnableCaching/@Cacheable machinery; starter-data-redis provides the
+             RedisCacheManager it auto-configures against. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- Flyway takes over schema ownership from ddl-auto now that partitioning needs DDL
              (PARTITION BY, per-partition tables) with no JPA annotation equivalent.
              spring-boot-flyway is required too, not just flyway-core: Spring Boot 4 split its

@@ -10,6 +10,7 @@ import com.slotwise.booking.model.CreateReservationRequest;
 import com.slotwise.booking.model.ReservationDto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.convert.ConversionService;
@@ -76,7 +77,10 @@ public class ReservationService {
     // check itself or a row inserted by something that bypasses this service entirely.
     private ReservationDto saveAndTranslateConflict(Reservation reservation, Long resourceId) {
         try {
-            return this.conversionService.convert(this.reservationRepository.save(reservation), ReservationDto.class);
+            // See ResourceService for why: ConversionService.convert() is @Nullable per
+            // Spring's contract, this package is @NullMarked.
+            return Objects.requireNonNull(
+                    this.conversionService.convert(this.reservationRepository.save(reservation), ReservationDto.class));
         } catch (DataIntegrityViolationException e) {
             throw new ReservationConflictException(resourceId);
         }

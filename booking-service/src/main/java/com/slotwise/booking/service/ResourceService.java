@@ -6,7 +6,10 @@ import com.slotwise.booking.model.CreateResourceRequest;
 import com.slotwise.booking.model.ResourceDto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -28,9 +31,18 @@ public class ResourceService {
         resource.setName(request.name());
         resource.setDescription(request.description());
         resource.setActive(true);
-        return this.conversionService.convert(this.resourceRepository.save(resource), ResourceDto.class);
+        // ConversionService.convert() is @Nullable per Spring's contract (null only when the
+        // source is null); this package is @NullMarked, so assert the non-null guarantee
+        // explicitly instead of silently trusting it.
+        return Objects.requireNonNull(
+                this.conversionService.convert(this.resourceRepository.save(resource), ResourceDto.class));
     }
 
+    // Cache-Aside: miss falls through to the DB and populates the cache; a hit never
+    // touches resourceRepository. update()/delete() evict below rather than write through,
+    // so a stale entry can only live until the next write to that id or the TTL (see
+    // application.yml spring.cache.redis.time-to-live).
+    @Cacheable("resources")
     @Transactional(readOnly = true)
     public ResourceDto getById(@NotNull Long id) {
         return this.resourceRepository.findSummaryById(id).orElseThrow(() -> new ResourceNotFoundException(id));
@@ -41,14 +53,16 @@ public class ResourceService {
         return this.resourceRepository.findAllSummaries(pageable);
     }
 
+    @CacheEvict(value = "resources", key = "#id")
     @Transactional
     public ResourceDto update(@NotNull Long id, @NotNull @Valid CreateResourceRequest request) {
         final Resource resource = this.findOrThrow(id);
         resource.setName(request.name());
         resource.setDescription(request.description());
-        return this.conversionService.convert(resource, ResourceDto.class);
+        return Objects.requireNonNull(this.conversionService.convert(resource, ResourceDto.class));
     }
 
+    @CacheEvict(value = "resources", key = "#id")
     @Transactional
     public void delete(@NotNull Long id) {
         if (!this.resourceRepository.existsById(id)) {
