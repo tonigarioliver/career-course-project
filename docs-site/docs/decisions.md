@@ -940,3 +940,23 @@ it needs a lease/TTL (crashed holder must not block forever) and a fencing token
 (holder whose lease already expired must not still be allowed to act as if it held
 the lock) — the classic Redlock pitfalls, absent from the single-instance Postgres
 version because Postgres releases the lock itself on backend disconnect.
+
+## Cache-Aside for reads, Write-Through for updates, Write-Behind deferred (Fase 3)
+
+`ResourceService.getById` is Cache-Aside (`@Cacheable`): a miss loads from Postgres and
+populates Redis, a hit never touches the DB. For `update`, evict-then-reload (still
+Cache-Aside, just eviction instead of population) was the first cut, but it throws away
+a value the method already computed for free — every write pays for a cache miss it
+didn't need to. Switched to **Write-Through** (`@CachePut`): the DTO `update()` returns
+is written into Redis in the same call, synchronously with the DB write, so a read right
+after never re-hits Postgres. `delete()` stays `@CacheEvict` — there's no new value to
+put.
+
+**Write-Behind (write-back)** — write to the cache and return immediately, flush to the
+DB asynchronously — is the roadmap's third pattern but isn't implemented here. It trades
+durability for write latency: a crash between the cache write and the async DB flush
+loses the write outright, so doing it safely needs a durable queue in between (an outbox
+table polled by a worker, or a real broker) — which is exactly Fase 4's Kafka/Outbox
+territory, not something worth half-building with ad-hoc Redis pub/sub now. Revisit once
+Kafka is in the picture; until then Write-Through covers every write path this project
+actually has.

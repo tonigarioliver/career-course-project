@@ -26,9 +26,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-// Verifies the Cache-Aside wiring end to end (real Redis via Testcontainers, not a mock
-// cache): first getById() is a miss that hits the repository, second is served from
-// Redis without touching it, and update() evicts so the next getById() is a miss again.
+// Verifies the caching wiring end to end (real Redis via Testcontainers, not a mock
+// cache): first getById() is a Cache-Aside miss that hits the repository, second is
+// served from Redis without touching it; update() is Write-Through, so the DTO it
+// returns is already what a following getById() serves, again without a repository hit.
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class ResourceServiceCacheTest {
@@ -82,16 +83,19 @@ class ResourceServiceCacheTest {
     }
 
     @Test
-    void update_evictsCache_soNextGetByIdHitsRepositoryAgain() {
+    void update_writesThroughToCache_soNextGetByIdSkipsRepository() {
         final ResourceDto resource = this.resourceService.create(
-                CreateResourceRequest.builder().name("Evicted Room").build());
+                CreateResourceRequest.builder().name("Original Room").build());
         this.resourceService.getById(resource.id());
-        this.resourceService.update(resource.id(),
+
+        final ResourceDto updated = this.resourceService.update(resource.id(),
                 CreateResourceRequest.builder().name("Renamed Room").build());
         Mockito.clearInvocations(this.resourceRepository);
 
-        this.resourceService.getById(resource.id());
+        final ResourceDto afterUpdate = this.resourceService.getById(resource.id());
 
-        verify(this.resourceRepository, Mockito.times(1)).findSummaryById(resource.id());
+        assertThat(afterUpdate).isEqualTo(updated);
+        assertThat(afterUpdate.name()).isEqualTo("Renamed Room");
+        verify(this.resourceRepository, Mockito.never()).findSummaryById(resource.id());
     }
 }
