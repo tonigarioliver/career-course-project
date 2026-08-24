@@ -21,6 +21,12 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  cache:
+    type: redis
   flyway:
     # Flyway migrates the primary (autowires the @Primary DataSource bean too, but that's
     # harmless: migrations run outside any @Transactional(readOnly = true) method, so

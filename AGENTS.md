@@ -38,6 +38,22 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   BOM already manages `testcontainers-bom` transitively). **Verified end-to-end**: with
   Docker Desktop's WSL integration on, `mvn -pl booking-service test` runs
   `ReservationServiceIntegrationTest` against a real Testcontainers Postgres — 2/2 pass.
+- **Spring Boot 4's per-feature autoconfigure split moved several classes' packages**,
+  same root cause as the Flyway note below. Two more hit while adding Fase 3 Redis
+  caching: `RedisCacheManagerBuilderCustomizer` is now
+  `org.springframework.boot.cache.autoconfigure` (not `...boot.autoconfigure.cache`), and
+  `@MockitoSpyBean`/`@MockitoBean` moved out of Boot entirely into core Spring Test —
+  `org.springframework.test.context.bean.override.mockito` (not
+  `org.springframework.boot.test.mock.mockito`, which no longer exists). If a Boot-provided
+  class 404s on import, search the jar for the class name rather than guessing the old
+  package.
+- **`GenericJacksonJsonRedisSerializer` (the Jackson-3-native cache serializer, used
+  instead of the legacy Jackson-2-based `GenericJackson2JsonRedisSerializer` since this
+  project runs Jackson 3) doesn't add type metadata by default.** A `@Cacheable` value
+  round-trips through Redis as a generic `LinkedHashMap` instead of its real DTO type
+  unless the builder's `.enableUnsafeDefaultTyping()` is set — see `CacheConfig`. Fine
+  for a Redis instance only this app writes to; would need
+  `.enableDefaultTyping(validator)` with an allowlist if Redis were shared/untrusted.
 - **`ConversionService` is only auto-registered in a web context.** `ResourceService`/
   `ReservationService` inject `ConversionService` to run the `@Component Converter<...>`
   beans; that bean only exists in production because `WebMvcAutoConfiguration` creates
