@@ -2,7 +2,9 @@ package com.slotwise.booking.security;
 
 import java.util.Collection;
 import java.util.List;
+import org.redisson.api.RedissonClient;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -13,6 +15,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 
 // ponytail: SecurityFilterChain only makes sense in a servlet web context — HttpSecurity
@@ -21,10 +24,12 @@ import org.springframework.security.web.SecurityFilterChain;
 @ConditionalOnWebApplication
 @Configuration
 @EnableMethodSecurity
+@EnableConfigurationProperties(RateLimitProperties.class)
 public class SecurityConfig {
 
     @Bean
-    SecurityFilterChain securityFilterChain(final HttpSecurity http) {
+    SecurityFilterChain securityFilterChain(
+            final HttpSecurity http, final RedissonClient redissonClient, final RateLimitProperties rateLimitProperties) {
         http
                 // CSRF protects cookie-based session auth from forged browser requests; this API is
                 // stateless (STATELESS below) and authenticates via a Bearer JWT header, which a
@@ -32,7 +37,10 @@ public class SecurityConfig {
                 .csrf(CsrfConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())))
+                // RateLimitFilter is deliberately not a bean (see its class comment) — built here
+                // instead, after the JWT filter so Authentication#getName() already has the subject.
+                .addFilterAfter(new RateLimitFilter(redissonClient, rateLimitProperties), BearerTokenAuthenticationFilter.class);
         return http.build();
     }
 

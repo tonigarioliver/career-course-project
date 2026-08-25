@@ -48,6 +48,9 @@ slotwise:
   reservation:
     min-duration-minutes: 15
     max-duration-minutes: 480
+  rate-limit:
+    # Token bucket (Redisson RRateLimiter), per JWT subject / per IP for anonymous requests.
+    permits-per-minute: 60
   datasource:
     # DataSourceConfig routes every @Transactional(readOnly = true) method's queries here
     # instead of the primary — the docker-compose hot standby (postgres-replica, port 5433).
