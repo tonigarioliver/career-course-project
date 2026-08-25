@@ -1021,3 +1021,39 @@ in this app for the cache-stampede lock, i.e. two ways of talking to the same Re
 two Fase-3 features. Worth reaching for if a future limit needs to combine multiple
 bandwidths (burst + daily quota) or a different backend — not something this project's
 single per-minute limit needs.
+
+## Pub/Sub (Fase 3, closing it): Redis Pub/Sub as a deliberately throwaway demo
+
+The roadmap item is "Pub/Sub **and its limitations**" — the point is to feel where it
+falls short, not to build production messaging with it (that's Kafka, Fase 4). This
+project's one real domain event today is "a reservation was created"
+(`ReservationService.create()`), so that's what gets published — a minimal
+`ReservationCreatedEvent` (id/resource/times, not the full `ReservationDto`, since a
+Pub/Sub message has no schema-versioning story to lean on if that DTO's shape changes
+later) to a `"reservation-events"` Redis channel via `RedissonClient.getTopic(...)`
+(Redisson's `RTopic`, not `spring-data-redis`'s own `RedisMessageListenerContainer` —
+already have the `RedissonClient` bean from the cache-stampede lock, no reason to wire a
+second Redis client for the same job).
+
+**Publish only after commit, not inline.** `create()` publishes a Spring
+`ApplicationEvent` (`ApplicationEventPublisher.publishEvent`), and
+`ReservationEventListener.onReservationCreated` — a
+`@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)` — is what actually
+calls `RTopic.publish()`. Publishing straight to Redis inline inside `create()` was the
+first cut, rejected: `@Transactional`'s commit happens *after* the method returns, so a
+plain call would fire the Redis message for a reservation that could still roll back
+afterward — a Pub/Sub message has no rollback of its own to undo that with. This is the
+same dual-write problem Fase 4's Outbox pattern solves properly (write the event to the
+DB in the same transaction as the data, so both commit or neither does); good enough
+here since nothing outside this process depends on this message yet.
+
+**No subscriber of its own** — a same-process listener would just be talking to itself,
+so `ReservationServiceIntegrationTest.create_publishesReservationCreatedEvent` plays the
+role of the external consumer (a future notification/audit service): subscribes to the
+channel, calls `create()`, asserts the message arrives via a `CountDownLatch`. That test
+is also the demonstration of the "limitation" half of the roadmap item without needing a
+separate flaky test for it: the subscription has to exist *before* `create()` runs, same
+as any real Pub/Sub consumer — start the subscriber after the publish and the message is
+already gone, no retry, no persisted log to catch up from. Contrast with Fase 4/Kafka:
+a topic retains its messages, so a consumer group starting late (or restarting) replays
+from its last committed offset instead of losing everything published while it was down.

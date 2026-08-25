@@ -13,6 +13,7 @@ import jakarta.validation.constraints.NotNull;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -31,6 +32,7 @@ public class ReservationService {
     private final ResourceRepository resourceRepository;
     private final ConversionService conversionService;
     private final ReservationProperties reservationProperties;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Transactional
     public ReservationDto create(@NotNull @Valid CreateReservationRequest request) {
@@ -68,6 +70,16 @@ public class ReservationService {
         final ReservationDto saved = this.saveAndTranslateConflict(reservation, request.resourceId());
         log.info("Created reservation {} for resource {} ({} - {})",
                 saved.id(), request.resourceId(), request.startTime(), request.endTime());
+        // Published via Spring's own event bus, not a direct Redis call here — ReservationEventListener's
+        // @TransactionalEventListener(phase = AFTER_COMMIT) only runs once this @Transactional
+        // method's transaction actually commits. Publishing straight to Redis inline would fire
+        // for a reservation that could still roll back afterward; a Pub/Sub message has no
+        // rollback of its own to undo that with. This is the same dual-write problem the Outbox
+        // pattern (Fase 4, Kafka) solves properly by writing the event to the DB in the same
+        // transaction instead — good enough here since this listener is a same-process demo,
+        // not a service other systems depend on.
+        this.applicationEventPublisher.publishEvent(
+                new ReservationCreatedEvent(saved.id(), request.resourceId(), request.startTime(), request.endTime()));
         return saved;
     }
 
