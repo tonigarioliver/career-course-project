@@ -1009,3 +1009,15 @@ burning permits twice. Registering it and then telling Boot not to (`FilterRegis
 + `setEnabled(false)`) works but is one more bean than needed; simplest is to just not put
 it in the context at all — `SecurityConfig` builds it with `new`, taking `RedissonClient`
 and `RateLimitProperties` as regular method parameters instead.
+
+### Considered, not used: [Bucket4j](https://www.baeldung.com/spring-bucket4j)
+
+A dedicated rate-limiting library, also token-bucket-based, with two things
+`RRateLimiter` doesn't have: several "bandwidths" combined in one bucket (e.g. a burst
+limit *and* a sustained limit enforced together) and a choice of refill algorithm
+(greedy vs. interval). Not adopted here — it needs its own Redis backend module
+(`bucket4j-redis`, with its own client wiring) alongside the `RedissonClient` already
+in this app for the cache-stampede lock, i.e. two ways of talking to the same Redis for
+two Fase-3 features. Worth reaching for if a future limit needs to combine multiple
+bandwidths (burst + daily quota) or a different backend — not something this project's
+single per-minute limit needs.
