@@ -1035,17 +1035,45 @@ later) to a `"reservation-events"` Redis channel via `RedissonClient.getTopic(..
 already have the `RedissonClient` bean from the cache-stampede lock, no reason to wire a
 second Redis client for the same job).
 
-**Publish only after commit, not inline.** `create()` publishes a Spring
-`ApplicationEvent` (`ApplicationEventPublisher.publishEvent`), and
-`ReservationEventListener.onReservationCreated` — a
-`@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)` — is what actually
-calls `RTopic.publish()`. Publishing straight to Redis inline inside `create()` was the
-first cut, rejected: `@Transactional`'s commit happens *after* the method returns, so a
-plain call would fire the Redis message for a reservation that could still roll back
-afterward — a Pub/Sub message has no rollback of its own to undo that with. This is the
-same dual-write problem Fase 4's Outbox pattern solves properly (write the event to the
-DB in the same transaction as the data, so both commit or neither does); good enough
-here since nothing outside this process depends on this message yet.
+**Publish only after commit, not inline — via an orchestrator/write-service split,
+not `@TransactionalEventListener`.** First cut published straight from inside
+`create()`, rejected: `@Transactional`'s commit happens *after* the method returns, so a
+plain call there would fire the Redis message for a reservation that could still roll
+back afterward — a Pub/Sub message has no rollback of its own to undo that with. Second
+cut used Spring's event bus (`ApplicationEventPublisher.publishEvent` +
+`@TransactionalEventListener(phase = AFTER_COMMIT)`) to get the ordering — technically
+correct, but it hides *why* the ordering is guaranteed behind framework machinery the
+next reader has to already know exists.
+
+**Settled on**: split `ReservationService` into two beans.
+`ReservationWriteService.create()` is purely the `@Transactional` DB work, no Pub/Sub
+awareness at all. `ReservationService.create()` — the orchestrator, and the only entry
+point any caller (controller, tests, anything future) goes through — calls
+`this.reservationWriteService.create(request)` and *then*, as the very next line,
+`redissonClient.getTopic(...).publish(...)`. No annotation, no event bus: because
+`reservationWriteService` is a distinct Spring bean, that call goes through its
+transactional proxy, and a proxy's advice commits (or rolls back and throws) *before*
+control returns to the caller — so by the time the orchestrator reaches the publish
+line, the commit has already happened, or the method never got there at all. Same
+guarantee as the `AFTER_COMMIT` version, expressed as plain sequential code instead of
+"know that this annotation runs after commit."
+
+**The one thing this relies on that's easy to get wrong**: it only works because the
+call crosses a real bean boundary. Had `create()` and the DB logic stayed in one class
+and called each other (`this.someTransactionalMethod()`), that's self-invocation —
+Spring's AOP proxy is bypassed entirely for calls a bean makes to itself, so the inner
+method's `@Transactional` would silently not apply. The split into two beans isn't just
+style here; it's what makes the ordering trick work at all.
+
+Considered and rejected: doing this same split but with each *step inside* `create()`
+(validate → lock → check overlap → save) as its own bean too. Those steps all need to
+run in the *same* transaction, which is the opposite requirement from the publish step
+(needs to run *outside* it) — extracting them as private methods within
+`ReservationWriteService` keeps them inside the one `@Transactional` for free, since a
+private method call never crosses the proxy either. Splitting them into separate beans
+would still work (default propagation `REQUIRED` joins the caller's existing
+transaction), but adds bean/proxy overhead for no benefit when nothing about those
+steps needs to be called independently of `create()`.
 
 **No subscriber of its own** — a same-process listener would just be talking to itself,
 so `ReservationServiceIntegrationTest.create_publishesReservationCreatedEvent` plays the
@@ -1057,3 +1085,11 @@ as any real Pub/Sub consumer — start the subscriber after the publish and the 
 already gone, no retry, no persisted log to catch up from. Contrast with Fase 4/Kafka:
 a topic retains its messages, so a consumer group starting late (or restarting) replays
 from its last committed offset instead of losing everything published while it was down.
+
+**Still not durable against a process crash** — the orchestrator/write-service split
+fixes ordering (publish never fires for a rolled-back write), not durability: a crash
+between `reservationWriteService.create()` returning and the `publish()` call still
+loses the event forever, same as the `AFTER_COMMIT` version did. Nothing here writes the
+event anywhere durable. That gap is exactly what Fase 4's Outbox pattern closes — write
+the event as a row in the same DB transaction as the data, so both commit atomically,
+then a separate relay/poller publishes it with retries until acknowledged.
