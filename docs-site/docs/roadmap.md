@@ -122,9 +122,12 @@ Project target: optimize real queries against millions of generated rows, measur
 
 Project target: add user cache, rate limiting, sessions.
 
-## Fase 4 (Meses 6-8) — Kafka
+## Fase 4 (Meses 6-8) — Kafka {#fase-4}
 
-- [ ] Topics, Partitions, Offsets, Consumer Groups.
+- [x] **Kickoff: Topics, Partitions, Offsets, Consumer Groups** — `reservation-events`
+      moved from Fase 3's Redis Pub/Sub to a real Kafka topic (3 partitions), producer +
+      in-process consumer inside `booking-service`, before touching the multi-service
+      split. See decisions.md.
 - [ ] Delivery guarantees (At Most Once, At Least Once, Exactly Once).
 - [ ] Patterns: Event Driven, Outbox, Saga, CQRS, Event Sourcing (conceptually).
 - [ ] **Migrate correlation IDs to Micrometer Tracing** (`micrometer-tracing-bridge-brave`
