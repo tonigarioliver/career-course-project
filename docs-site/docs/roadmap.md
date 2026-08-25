@@ -118,7 +118,7 @@ Project target: optimize real queries against millions of generated rows, measur
 - [x] Cache-Aside, Write-Through (Write-Behind deferred, see decisions.md).
 - [x] Distributed Locks (Redisson).
 - [x] Rate Limiting (Token Bucket via Redisson `RRateLimiter`; Sliding Window skipped, see decisions.md).
-- [ ] Pub/Sub and its limitations.
+- [x] Pub/Sub and its limitations.
 
 Project target: add user cache, rate limiting, sessions.
 

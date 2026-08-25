@@ -6,15 +6,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import com.slotwise.booking.model.CreateReservationRequest;
 import com.slotwise.booking.model.CreateResourceRequest;
 import com.slotwise.booking.model.ReservationDto;
 import com.slotwise.booking.model.ResourceDto;
 import org.junit.jupiter.api.Test;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -75,11 +78,42 @@ class ReservationServiceIntegrationTest {
 
     private final ResourceService resourceService;
     private final ReservationService reservationService;
+    private final RedissonClient redissonClient;
 
     @Autowired
-    ReservationServiceIntegrationTest(ResourceService resourceService, ReservationService reservationService) {
+    ReservationServiceIntegrationTest(
+            ResourceService resourceService, ReservationService reservationService, RedissonClient redissonClient) {
         this.resourceService = resourceService;
         this.reservationService = reservationService;
+        this.redissonClient = redissonClient;
+    }
+
+    @Test
+    void create_publishesReservationCreatedEvent() throws InterruptedException {
+        final ResourceDto resource = this.resourceService.create(
+                CreateResourceRequest.builder().name("Room PubSub").build());
+
+        final CountDownLatch received = new CountDownLatch(1);
+        final ReservationCreatedEvent[] captured = new ReservationCreatedEvent[1];
+        final int listenerId = this.redissonClient.getTopic(ReservationEventListener.CHANNEL)
+                .addListener(ReservationCreatedEvent.class, (channel, event) -> {
+                    captured[0] = event;
+                    received.countDown();
+                });
+        try {
+            final ReservationDto reservation = this.reservationService.create(CreateReservationRequest.builder()
+                    .resourceId(resource.id())
+                    .startTime(Instant.parse("2026-02-01T10:00:00Z"))
+                    .endTime(Instant.parse("2026-02-01T11:00:00Z"))
+                    .ownerSubject("user-pubsub")
+                    .build());
+
+            assertThat(received.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(captured[0].reservationId()).isEqualTo(reservation.id());
+            assertThat(captured[0].resourceId()).isEqualTo(resource.id());
+        } finally {
+            this.redissonClient.getTopic(ReservationEventListener.CHANNEL).removeListener(listenerId);
+        }
     }
 
     @Test
