@@ -27,6 +27,20 @@ spring:
       port: ${REDIS_PORT:6379}
   cache:
     type: redis
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: booking-service
+      # earliest, not Kafka's own default (latest): the consumer group's committed offset
+      # already covers "don't reprocess what this group has seen" — earliest only matters
+      # the first time this group-id ever runs, and then means "don't skip whatever was
+      # published before this consumer happened to start" instead of silently missing it.
+      auto-offset-reset: earliest
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.slotwise.booking.service
   flyway:
     # Flyway migrates the primary (autowires the @Primary DataSource bean too, but that's
     # harmless: migrations run outside any @Transactional(readOnly = true) method, so

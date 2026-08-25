@@ -68,6 +68,18 @@
             <version>3.50.0</version>
         </dependency>
 
+        <!-- Fase 4 "Kafka" kickoff: reservation-created moves from Redis Pub/Sub (Fase 3) to
+             a real Kafka topic, in-process producer + consumer, before touching the
+             multi-service split. spring-boot-starter-kafka, not the bare spring-kafka
+             dependency — same per-feature-autoconfigure-module reason as spring-boot-flyway
+             above: Spring Boot 4's KafkaAutoConfiguration (and its Testcontainers
+             @ServiceConnection support) lives in the dedicated spring-boot-kafka module, which
+             the starter pulls in; plain spring-kafka alone wouldn't get autoconfigured. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-kafka</artifactId>
+        </dependency>
+
         <!-- Flyway takes over schema ownership from ddl-auto now that partitioning needs DDL
              (PARTITION BY, per-partition tables) with no JPA annotation equivalent.
              spring-boot-flyway is required too, not just flyway-core: Spring Boot 4 split its
@@ -111,6 +123,16 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-kafka-test</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

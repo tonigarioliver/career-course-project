@@ -1093,3 +1093,83 @@ loses the event forever, same as the `AFTER_COMMIT` version did. Nothing here wr
 event anywhere durable. That gap is exactly what Fase 4's Outbox pattern closes — write
 the event as a row in the same DB transaction as the data, so both commit atomically,
 then a separate relay/poller publishes it with retries until acknowledged.
+
+## Fase 4 (Kafka) kickoff: `reservation-events` moves from Redis Pub/Sub to a real topic
+
+Fase 4 is large (topics/partitions/consumer groups/delivery guarantees, and as a project
+target, splitting `booking-service` into User/Notification/Audit services). Kickoff
+scope, deliberately: migrate the one real domain event this project already has
+(`ReservationCreatedEvent`, Fase 3's Redis Pub/Sub demo) onto a real Kafka topic, still
+inside `booking-service`, before touching the multi-service split — same shape as how
+Fase 2 and Fase 3 each kicked off on existing code rather than jumping straight to their
+"project" target.
+
+**Dependency**: `spring-boot-starter-kafka` (and `spring-boot-starter-kafka-test`), not
+the bare `spring-kafka`/`spring-kafka-test` artifacts — same per-feature-autoconfigure-
+module reason as `spring-boot-flyway`: Spring Boot 4.0.1's `KafkaAutoConfiguration` and
+its Testcontainers `@ServiceConnection` support (`ApacheKafkaContainerConnectionDetailsFactory`)
+live in the dedicated `spring-boot-kafka` module, which the starter pulls in transitively;
+plain `spring-kafka` alone doesn't get autoconfigured.
+
+**`docker-compose.yml`**: `apache/kafka:4.1.0`, KRaft mode (no Zookeeper), single broker
+with combined `broker,controller` roles — the standard shape for a from-scratch dev
+setup today, config values explained inline in the compose file (`KAFKA_NODE_ID`,
+`KAFKA_ADVERTISED_LISTENERS`, `KAFKA_CONTROLLER_QUORUM_VOTERS`, etc.). First attempt
+used `apache/kafka:3.9.0` for the Testcontainers test broker (`org.testcontainers.kafka.KafkaContainer`,
+`testcontainers-kafka` 2.0.3) and failed with `advertised.listeners cannot use the
+nonroutable meta-address 0.0.0.0` during the container's own storage-format step —
+testcontainers-kafka 2.0.3's listener-override mechanism (a wrapper script exporting
+`KAFKA_ADVERTISED_LISTENERS` before handing off to the image's own `/etc/kafka/docker/run`)
+didn't take effect against that image version. `apache/kafka:4.1.0` (matching the
+`kafka.version` the Spring Boot 4.0.1 BOM manages for the client libs) works cleanly with
+both the Testcontainers module and the hand-configured `docker-compose.yml` broker.
+Pinned the same tag in both places instead of letting one drift from the other.
+
+**Topic ownership**: `ReservationCreatedEvent.TOPIC` (a constant on the event record
+itself), not a constant borrowed from whichever service happens to publish it. Every
+class that needs to agree on the topic name — the producer (`ReservationService`), the
+consumer (`ReservationEventListener`), the `NewTopic` declaration (`KafkaTopicConfig`),
+and the test — reads it off the message type, not off another class's unrelated
+business logic. `KafkaTopicConfig`'s `@Bean NewTopic` (`TopicBuilder`, 3 partitions) is
+the standard Spring Kafka way to declare a topic's shape in code ("topic as code") —
+there's no `application.yml` property for partition count; Boot's `KafkaProperties`
+only configures the *client* (bootstrap servers, serializers, group-id), not topic
+shape. Without it, the broker's `auto.create.topics.enable` default would silently
+create the topic with 1 partition on first publish — nothing to actually spread a
+consumer group across, defeating the point of this kickoff. (In a real production setup,
+topic creation is more often owned by infra tooling — Terraform, `kafka-topics.sh` — not
+the application; the in-app `@Bean` fits this project's "dev/course, one `docker compose
+up` should be enough" scope.)
+
+**Why a second bean, not a shared "Kafka service"**: considered pulling the
+producer/consumer/topic-config into a `kafka` package or a generic helper. Rejected —
+there's exactly one producer and one consumer for one event type today, nothing
+duplicated to extract, and a package boundary inside `booking-service` wouldn't help the
+*actual* future need anyway: once User/Notification/Audit are separate Maven
+modules/deployables, each compiles independently, so code living in `booking-service`'s
+source tree is invisible to the others regardless of which package it's in. What those
+future services will genuinely need to share is the **wire contract** — `ReservationCreatedEvent`'s
+shape and topic name — which argues for a small dedicated module (e.g. `slotwise-events`)
+each service depends on, not a same-repo package. Not created yet: no second consumer
+exists to need it. Revisit when the actual service split happens.
+
+**Consumer group**: `ReservationEventListener` has no explicit `groupId` — it inherits
+`application.yml`'s `spring.kafka.consumer.group-id: booking-service`, the group every
+listener in this app uses unless it says otherwise. A future `notification-service`/
+`audit-service` would run its own listener under its own `group-id`, so it gets every
+message independently instead of competing with `booking-service`'s listener for the
+topic's partitions — see the test note below for what that independence actually looks
+like in practice.
+
+**Test**: `ReservationServiceIntegrationTest` runs against a real Testcontainers Kafka
+broker (`@ServiceConnection`, same image as `docker-compose.yml`) with its own
+`CapturingListener` bean subscribed under a distinct `groupId` ("test-consumer") —
+concretely demonstrating that consumer groups are independent: this group and the
+production `ReservationEventListener`'s ("booking-service" group) both receive every
+message published, neither steals it from the other, unlike a single Redis Pub/Sub
+subscriber list where there's no such thing as "groups" at all. Polls for the message
+functionally (`Stream.generate` + `takeWhile(Objects::nonNull)` + `filter` +
+`findFirst`, no explicit loop) rather than assuming the very next queued message is its
+own — `CapturingListener`'s queue is one bean shared by the whole test class, and every
+other `@Test` method here also calls `create()`, each publishing its own event onto the
+same shared queue.

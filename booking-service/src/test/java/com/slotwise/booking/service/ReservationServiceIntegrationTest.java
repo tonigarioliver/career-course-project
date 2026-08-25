@@ -5,19 +5,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.Objects;
+import java.util.stream.Stream;
 import com.slotwise.booking.model.CreateReservationRequest;
 import com.slotwise.booking.model.CreateResourceRequest;
 import com.slotwise.booking.model.ReservationDto;
 import com.slotwise.booking.model.ResourceDto;
 import org.junit.jupiter.api.Test;
-import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -27,12 +29,14 @@ import org.springframework.core.convert.ConversionService;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.data.domain.Pageable;
+import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers
@@ -49,6 +53,28 @@ class ReservationServiceIntegrationTest {
         }
     }
 
+    // A second, independent consumer group reading "reservation-events" — proof that Kafka
+    // consumer groups are genuinely independent (see decisions.md): this group and the
+    // production ReservationEventListener's ("booking-service", from application.yml) both
+    // get every message, neither steals it from the other, unlike a single Redis Pub/Sub
+    // subscriber list.
+    @TestConfiguration
+    static class CapturingListenerConfig {
+        @Bean
+        CapturingListener capturingListener() {
+            return new CapturingListener();
+        }
+    }
+
+    static class CapturingListener {
+        final BlockingQueue<ReservationCreatedEvent> received = new LinkedBlockingQueue<>();
+
+        @KafkaListener(topics = ReservationCreatedEvent.TOPIC, groupId = "test-consumer")
+        void onReservationCreated(final ReservationCreatedEvent event) {
+            this.received.add(event);
+        }
+    }
+
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17");
@@ -60,6 +86,12 @@ class ReservationServiceIntegrationTest {
     @ServiceConnection("redis")
     static GenericContainer<?> redis = new GenericContainer<>(DockerImageName.parse("redis:7"))
             .withExposedPorts(6379);
+
+    // Fase 4 "Kafka" kickoff — same image as docker-compose.yml's KRaft single-broker setup,
+    // so this test exercises the same broker behavior as the real dev environment.
+    @Container
+    @ServiceConnection
+    static KafkaContainer kafka = new KafkaContainer(DockerImageName.parse("apache/kafka:4.1.0"));
 
     // @ServiceConnection above only wires spring.datasource.* (what DataSourceConfig's
     // primaryDataSource reads) — it has no idea about slotwise.datasource.replica.*, our
@@ -78,41 +110,54 @@ class ReservationServiceIntegrationTest {
 
     private final ResourceService resourceService;
     private final ReservationService reservationService;
-    private final RedissonClient redissonClient;
+    private final CapturingListener capturingListener;
 
     @Autowired
     ReservationServiceIntegrationTest(
-            ResourceService resourceService, ReservationService reservationService, RedissonClient redissonClient) {
+            ResourceService resourceService, ReservationService reservationService, CapturingListener capturingListener) {
         this.resourceService = resourceService;
         this.reservationService = reservationService;
-        this.redissonClient = redissonClient;
+        this.capturingListener = capturingListener;
     }
 
     @Test
-    void create_publishesReservationCreatedEvent() throws InterruptedException {
+    void create_publishesReservationCreatedEvent() {
         final ResourceDto resource = this.resourceService.create(
-                CreateResourceRequest.builder().name("Room PubSub").build());
+                CreateResourceRequest.builder().name("Room Kafka").build());
 
-        final CountDownLatch received = new CountDownLatch(1);
-        final ReservationCreatedEvent[] captured = new ReservationCreatedEvent[1];
-        final int listenerId = this.redissonClient.getTopic(ReservationService.RESERVATION_EVENTS_CHANNEL)
-                .addListener(ReservationCreatedEvent.class, (channel, event) -> {
-                    captured[0] = event;
-                    received.countDown();
-                });
+        final ReservationDto reservation = this.reservationService.create(CreateReservationRequest.builder()
+                .resourceId(resource.id())
+                .startTime(Instant.parse("2026-02-01T10:00:00Z"))
+                .endTime(Instant.parse("2026-02-01T11:00:00Z"))
+                .ownerSubject("user-kafka")
+                .build());
+
+        // CapturingListener's queue is one shared bean for the whole test class, and every
+        // other @Test method in here also calls create() (each publishing its own event to the
+        // same topic) — so this drains past whatever unrelated events are already queued up
+        // from other test methods instead of assuming the very next one is ours.
+        final ReservationCreatedEvent event = pollForReservation(reservation.id());
+        assertThat(event.resourceId()).isEqualTo(resource.id());
+    }
+
+    // Stream.generate(this::pollNext) keeps calling poll(10s) for as long as a message keeps
+    // arriving (takeWhile stops on the first null, i.e. the first 10s with nothing new);
+    // filter/findFirst then picks out the one that's actually ours among whatever unrelated
+    // events other @Test methods left in the shared queue.
+    private ReservationCreatedEvent pollForReservation(final Long reservationId) {
+        return Stream.generate(this::pollNext)
+                .takeWhile(Objects::nonNull)
+                .filter(event -> event.reservationId().equals(reservationId))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No reservation-events message for reservation " + reservationId));
+    }
+
+    private ReservationCreatedEvent pollNext() {
         try {
-            final ReservationDto reservation = this.reservationService.create(CreateReservationRequest.builder()
-                    .resourceId(resource.id())
-                    .startTime(Instant.parse("2026-02-01T10:00:00Z"))
-                    .endTime(Instant.parse("2026-02-01T11:00:00Z"))
-                    .ownerSubject("user-pubsub")
-                    .build());
-
-            assertThat(received.await(5, TimeUnit.SECONDS)).isTrue();
-            assertThat(captured[0].reservationId()).isEqualTo(reservation.id());
-            assertThat(captured[0].resourceId()).isEqualTo(resource.id());
-        } finally {
-            this.redissonClient.getTopic(ReservationService.RESERVATION_EVENTS_CHANNEL).removeListener(listenerId);
+            return this.capturingListener.received.poll(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("Interrupted while polling reservation-events", e);
         }
     }
 
