@@ -115,9 +115,9 @@ Project target: optimize real queries against millions of generated rows, measur
 
 ## Fase 3 (Meses 5-6) — Redis
 
-- [ ] Cache-Aside, Write-Through, Write-Behind.
-- [ ] Distributed Locks (Redisson).
-- [ ] Rate Limiting (Token Bucket, Sliding Window).
+- [x] Cache-Aside, Write-Through (Write-Behind deferred, see decisions.md).
+- [x] Distributed Locks (Redisson).
+- [x] Rate Limiting (Token Bucket via Redisson `RRateLimiter`; Sliding Window skipped, see decisions.md).
 - [ ] Pub/Sub and its limitations.
 
 Project target: add user cache, rate limiting, sessions.

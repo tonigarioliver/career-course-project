@@ -987,3 +987,25 @@ read beats an unbounded wait); the lock auto-releases after 5s if its holder cra
 mid-load. Tested with real concurrent threads racing into `getOrLoad` for a never-cached
 key — without the lock every one of them would run the loader, with it only the winner
 does.
+
+## Rate limiting: Redisson `RRateLimiter`, not a hand-rolled sliding window
+
+Fase 3's "Rate Limiting (Token Bucket, Sliding Window)" item names two algorithms to
+learn, not two to implement. Redisson's `RRateLimiter` already *is* a token bucket
+(fixed capacity refilled at a constant rate, backed by a Lua script so `trySetRate`
++ `tryAcquire` stay atomic across the cluster) — reusing the `RedissonClient` bean
+already wired for the cache-stampede lock cost nothing new. A hand-rolled sliding-window
+log (a Redis sorted set of request timestamps, trimmed and counted per request) was the
+other pattern on the roadmap, but this project has no requirement neither pattern
+already covers (no burst-vs-average distinction that matters yet) — building both would
+be two implementations of the same guarantee.
+
+`RateLimitFilter` is one bucket per JWT subject (`Authentication#getName()`), falling
+back to remote IP for anonymous requests, wired into the security chain *after*
+`BearerTokenAuthenticationFilter` so the subject is already resolved. It's deliberately
+**not** a `@Component`: any `Filter`-typed bean gets auto-registered by Spring Boot as a
+plain servlet filter too, outside the security chain — running it twice per request and
+burning permits twice. Registering it and then telling Boot not to (`FilterRegistrationBean`
++ `setEnabled(false)`) works but is one more bean than needed; simplest is to just not put
+it in the context at all — `SecurityConfig` builds it with `new`, taking `RedissonClient`
+and `RateLimitProperties` as regular method parameters instead.
