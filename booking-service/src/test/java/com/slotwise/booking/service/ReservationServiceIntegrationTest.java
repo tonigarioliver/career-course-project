@@ -95,7 +95,7 @@ class ReservationServiceIntegrationTest {
 
         final CountDownLatch received = new CountDownLatch(1);
         final ReservationCreatedEvent[] captured = new ReservationCreatedEvent[1];
-        final int listenerId = this.redissonClient.getTopic(ReservationEventListener.CHANNEL)
+        final int listenerId = this.redissonClient.getTopic(ReservationService.RESERVATION_EVENTS_CHANNEL)
                 .addListener(ReservationCreatedEvent.class, (channel, event) -> {
                     captured[0] = event;
                     received.countDown();
@@ -112,7 +112,7 @@ class ReservationServiceIntegrationTest {
             assertThat(captured[0].reservationId()).isEqualTo(reservation.id());
             assertThat(captured[0].resourceId()).isEqualTo(resource.id());
         } finally {
-            this.redissonClient.getTopic(ReservationEventListener.CHANNEL).removeListener(listenerId);
+            this.redissonClient.getTopic(ReservationService.RESERVATION_EVENTS_CHANNEL).removeListener(listenerId);
         }
     }
 
