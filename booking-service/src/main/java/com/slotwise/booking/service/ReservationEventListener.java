@@ -1,8 +1,10 @@
 package com.slotwise.booking.service;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 // Fase 4 "Kafka" kickoff: the in-process stand-in for the notification/audit services the
 // roadmap's actual project target adds later (split booking-service into User/Notification/
@@ -15,10 +17,21 @@ import org.springframework.stereotype.Component;
 // is exactly what closes that gap here).
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class ReservationEventListener {
 
+    private final ProcessedEvents processedEvents;
+
+    // The outbox delivers at-least-once, so the same event can arrive twice (e.g. the relay's
+    // commit failed after a successful send). The dedup insert and the processing share one
+    // transaction: a processing failure un-marks the event so the redelivery is retried.
+    @Transactional
     @KafkaListener(topics = ReservationCreatedEvent.TOPIC)
     void onReservationCreated(final ReservationCreatedEvent event) {
+        if (!this.processedEvents.markProcessed("reservation-created:" + event.reservationId())) {
+            log.info("Duplicate reservation event skipped: {}", event);
+            return;
+        }
         log.info("Reservation event received from {}: {}", ReservationCreatedEvent.TOPIC, event);
     }
 }

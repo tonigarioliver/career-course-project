@@ -32,6 +32,7 @@ import org.springframework.core.convert.ConversionService;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.data.domain.Pageable;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -115,11 +116,15 @@ class ReservationServiceIntegrationTest {
     private final ReservationService reservationService;
     private final CapturingListener capturingListener;
     private final OutboxEventRepository outboxEventRepository;
+    private final ProcessedEvents processedEvents;
+    private final JdbcClient jdbcClient;
 
     @Autowired
     ReservationServiceIntegrationTest(
             ResourceService resourceService, ReservationService reservationService, CapturingListener capturingListener,
-            OutboxEventRepository outboxEventRepository) {
+            OutboxEventRepository outboxEventRepository, ProcessedEvents processedEvents, JdbcClient jdbcClient) {
+        this.processedEvents = processedEvents;
+        this.jdbcClient = jdbcClient;
         this.outboxEventRepository = outboxEventRepository;
         this.resourceService = resourceService;
         this.reservationService = reservationService;
@@ -151,6 +156,31 @@ class ReservationServiceIntegrationTest {
                 assertThat(this.outboxEventRepository.findAll())
                         .anyMatch(row -> row.getMessageKey().equals(resource.id().toString())
                                 && row.getPublishedAt() != null));
+    }
+
+    // The production ReservationEventListener marks every event it handles; this proves it ran
+    // end to end (Kafka -> listener -> transactional dedup insert).
+    @Test
+    void create_listenerMarksEventProcessed() {
+        final ResourceDto resource = this.resourceService.create(
+                CreateResourceRequest.builder().name("Room Dedup").build());
+        final ReservationDto reservation = this.reservationService.create(CreateReservationRequest.builder()
+                .resourceId(resource.id())
+                .startTime(Instant.parse("2026-04-01T10:00:00Z"))
+                .endTime(Instant.parse("2026-04-01T11:00:00Z"))
+                .ownerSubject("user-dedup")
+                .build());
+
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(this.jdbcClient.sql("SELECT count(*) FROM processed_event WHERE id = :id")
+                        .param("id", "reservation-created:" + reservation.id())
+                        .query(Long.class).single()).isEqualTo(1L));
+    }
+
+    @Test
+    void markProcessed_secondCallForSameId_isDuplicate() {
+        assertThat(this.processedEvents.markProcessed("test-event-1")).isTrue();
+        assertThat(this.processedEvents.markProcessed("test-event-1")).isFalse();
     }
 
     // The outbox row is written in the reservation's transaction, so a rolled-back create

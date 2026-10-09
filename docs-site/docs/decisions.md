@@ -1173,3 +1173,53 @@ functionally (`Stream.generate` + `takeWhile(Objects::nonNull)` + `filter` +
 own — `CapturingListener`'s queue is one bean shared by the whole test class, and every
 other `@Test` method here also calls `create()`, each publishing its own event onto the
 same shared queue.
+
+## Transactional Outbox + idempotent consumer: at-least-once delivery (Fase 4)
+
+**The gap it closes**: `ReservationService.create()` used to commit the reservation and
+*then* call `kafkaTemplate.send(...)`. A crash (or broker outage) between the two left a
+reservation with no event, and nothing to recover it from. Postgres and Kafka can't share
+a transaction, so the fix isn't "make it atomic" — it's to make the event part of the
+database transaction and ship it to Kafka afterwards.
+
+**Outbox**: `ReservationWriteService.create()` inserts an `outbox_event` row in the same
+transaction as the reservation (`V2__outbox_event.sql`) — both commit or both roll back.
+`OutboxRelay` (`@Scheduled`, 1s `fixedDelay`) ships unpublished rows to Kafka.
+`ReservationService` no longer touches `KafkaTemplate`.
+
+**Relay shape, and why**
+- **One transaction per row** (`TransactionTemplate`, not `@Transactional` — self-invocation
+  wouldn't go through the proxy). A single batch transaction meant a failure on row 5 rolled
+  back the `published_at` marks of rows 1-4 (already sent) and re-sent them, and one
+  un-deserializable "poison" row blocked every row behind it forever.
+- **`SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1`**: the row lock only lives for the
+  transaction, which is why the relay has one at all; `SKIP LOCKED` lets several instances
+  run without double-publishing or blocking on each other.
+- **`send(...).get()` inside the transaction**: `send()` is async, so without waiting for the
+  ack a failure would surface *after* the commit marked the row published — a lost event.
+- **First failure aborts the tick** (exception propagates): a later event never overtakes a
+  failed earlier one with the same key, preserving per-`resourceId` order.
+- The rollback only undoes the Postgres mark, never the Kafka send — that's the source of
+  duplicates below.
+
+**Why duplicates are accepted**: if the send succeeds and the commit then fails, the row
+stays unpublished and is re-sent. Marking the row published *before* sending in its own
+committed transaction would instead lose the event when Kafka fails — a duplicate is
+recoverable, a lost event isn't, so the outbox picks duplicates. Producer idempotence
+(`enable.idempotence`) doesn't help: it only dedupes retries within one producer session,
+not a re-send from a later relay transaction.
+
+**Idempotent consumer**: `ReservationEventListener` first does `INSERT INTO processed_event
+... ON CONFLICT DO NOTHING` (`ProcessedEvents.markProcessed`, `V3__processed_event.sql`)
+and skips the message if no row was inserted. One atomic insert rather than "exists? then
+insert", which two concurrent deliveries would both pass. The insert and the processing
+share the listener's `@Transactional`, so a processing failure un-marks the event and the
+redelivery is retried. Event id is `reservation-created:<reservationId>` — enough for the
+one event type that exists; add an explicit `eventId` (e.g. the outbox row id) when a
+second type appears.
+
+**Deliberately not done**: retry counter / dead-letter table for a permanently failing
+event (it blocks the queue until fixed); cleanup of published `outbox_event` and old
+`processed_event` rows (both grow forever); Debezium/CDC instead of polling; a test that
+sends the *same* message twice end to end (the listener has nothing observable to count
+until it does real work — Notification/Audit).

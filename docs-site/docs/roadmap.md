@@ -128,8 +128,11 @@ Project target: add user cache, rate limiting, sessions.
       moved from Fase 3's Redis Pub/Sub to a real Kafka topic (3 partitions), producer +
       in-process consumer inside `booking-service`, before touching the multi-service
       split. See decisions.md.
-- [ ] Delivery guarantees (At Most Once, At Least Once, Exactly Once).
-- [ ] Patterns: Event Driven, Outbox, Saga, CQRS, Event Sourcing (conceptually).
+- [~] Delivery guarantees (At Most Once, At Least Once, Exactly Once) — At Least Once via
+      the outbox + idempotent consumer, see decisions.md. At Most Once / Exactly Once
+      (Kafka transactions) not explored yet.
+- [~] Patterns: Event Driven, Outbox (done, `OutboxRelay`), Saga, CQRS, Event Sourcing
+      (conceptually) — Saga/CQRS/Event Sourcing still pending.
 - [ ] **Migrate correlation IDs to Micrometer Tracing** (`micrometer-tracing-bridge-brave`
       or `-otel`) once there's more than one service. The hand-rolled `CorrelationIdFilter`
       from Fase 1 only correlates logs *within* `booking-service` — it has no way to carry
