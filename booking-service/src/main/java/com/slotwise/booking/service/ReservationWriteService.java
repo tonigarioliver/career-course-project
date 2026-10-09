@@ -78,11 +78,11 @@ public class ReservationWriteService {
         // Same transaction as the reservation insert: OutboxRelay publishes this row to Kafka
         // after commit, so a crash between commit and publish can no longer lose the event.
         final ReservationCreatedEvent event = new ReservationCreatedEvent(
-                saved.id(), request.resourceId(), request.startTime(), request.endTime());
+                saved.id(), request.resourceId(), request.ownerSubject(), request.startTime(), request.endTime());
         this.outboxEventRepository.save(new OutboxEvent(
                 ReservationCreatedEvent.TOPIC, request.resourceId().toString(), this.jsonMapper.writeValueAsString(event)));
-        log.info("Created reservation {} for resource {} ({} - {})",
-                saved.id(), request.resourceId(), request.startTime(), request.endTime());
+        log.info("Created reservation {} for resource {} owner {} ({} - {})",
+                saved.id(), request.resourceId(), request.ownerSubject(), request.startTime(), request.endTime());
         return saved;
     }
 

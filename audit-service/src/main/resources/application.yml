@@ -33,6 +33,11 @@ spring:
       properties:
         spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
         spring.json.trusted.packages: com.slotwise.events
+        # Never auto-create the topic: whichever consumer subscribed first on a fresh broker created it
+        # with 1 partition (broker default) before booking-service's NewTopic made it 3, and consumers
+        # only notice new partitions after a metadata refresh (up to 5 min) — events on partitions 1-2
+        # were silently delayed. booking-service owns the topic; consumers wait until it exists.
+        allow.auto.create.topics: false
   flyway:
     enabled: true
 

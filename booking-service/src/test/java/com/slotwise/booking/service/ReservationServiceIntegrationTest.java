@@ -150,6 +150,7 @@ class ReservationServiceIntegrationTest {
         // from other test methods instead of assuming the very next one is ours.
         final ReservationCreatedEvent event = pollForReservation(reservation.id());
         assertThat(event.resourceId()).isEqualTo(resource.id());
+        assertThat(event.ownerSubject()).isEqualTo("user-kafka");
 
         // The relay marks the row published right after the broker ack, so it can lag the
         // consumer seeing the message by a moment.

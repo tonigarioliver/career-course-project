@@ -148,8 +148,17 @@ communicating via Kafka.
 
 - [x] **Audit Service** — own module, consumer group and database; idempotent consumer;
       admin-only read endpoint. Shared contract in `slotwise-events`. See decisions.md.
-- [ ] Notification Service.
-- [ ] User Service.
+- [x] **Notification Service** — Inbox pattern: idempotent listener + worker with configurable
+      retries; the owner's email is resolved from Keycloak at send time. See decisions.md.
+- [ ] **`ownerSubject` from the token, not the request body.** Today `CreateReservationRequest.ownerSubject`
+      is client-supplied, so any `RESERVATION_USER` can make notification-service email any Keycloak
+      user by putting their id in a reservation. Fix: take it from the caller's JWT `sub`; only
+      `RESERVATION_ADMIN` may book on behalf of another owner (then the body field is honoured).
+- [ ] `ErrorHandlingDeserializer` on `booking-service`'s Kafka listener (a poison record currently
+      blocks it; audit/notification already have it) — planned as its own later commit.
+- [ ] User Service — **deferred**: not needed to notify (Keycloak already owns user data, and the
+      Inbox worker looks the user up at send time). Revisit if the system needs user-owned data
+      (e.g. notification preferences).
 
 ## Fase 5 (Meses 8-9) — Docker
 

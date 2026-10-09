@@ -17,5 +17,6 @@ This site tracks three things as the course progresses:
 
 !!! note "Source of truth"
 
-    The code lives in `booking-service/`. This site is a readable view on top of it —
+    The code lives in `booking-service/`, `audit-service/`, `notification-service/` and the shared
+    `slotwise-events/`. This site is a readable view on top of it —
     if the two ever disagree, the code and the git history win.

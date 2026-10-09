@@ -28,6 +28,12 @@
       "lastName": "User",
       "credentials": [{ "type": "password", "value": "bob123", "temporary": false }],
       "realmRoles": ["RESERVATION_USER"]
+    },
+    {
+      "username": "service-account-notification-service-client",
+      "enabled": true,
+      "serviceAccountClientId": "notification-service-client",
+      "clientRoles": { "realm-management": ["view-users"] }
     }
   ],
   "clients": [
@@ -37,6 +43,16 @@
       "publicClient": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": true
+    },
+    {
+      "clientId": "notification-service-client",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "notification-service-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
     }
   ]
 }

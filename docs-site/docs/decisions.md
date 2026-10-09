@@ -1188,8 +1188,9 @@ transaction as the reservation (`V2__outbox_event.sql`) — both commit or both 
 `ReservationService` no longer touches `KafkaTemplate`.
 
 **Relay shape, and why**
-- **One transaction per row** (`TransactionTemplate`, not `@Transactional` — self-invocation
-  wouldn't go through the proxy). A single batch transaction meant a failure on row 5 rolled
+- **One transaction per row**: `OutboxRelay` (non-transactional orchestrator) calls
+  `OutboxPublishService.publishNext()` (`@Transactional`) once per row, through Spring's proxy — the
+  same split as `ReservationService`/`ReservationWriteService`. A single batch transaction meant a failure on row 5 rolled
   back the `published_at` marks of rows 1-4 (already sent) and re-sent them, and one
   un-deserializable "poison" row blocked every row behind it forever.
 - **`SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1`**: the row lock only lives for the
@@ -1277,3 +1278,68 @@ annotation processor) so new modules inherit it instead of re-hitting the gotcha
 
 **Deliberately not done**: dead-letter topic / retry counter, cleanup of old `audit_event` rows,
 Notification and User services, Micrometer Tracing across services, Dockerfiles (Fase 5).
+
+## Notification service: Inbox pattern, email resolved at send time (Fase 4)
+
+Spec: `docs/superpowers/specs/2026-10-09-notification-service-design.md`. The service has no HTTP API.
+
+**Why not a User Service (for now)**. Notification needs the owner's email, which only Keycloak has.
+Options weighed: (1) email inside the event — no lookup, no race, but PII retained in Kafka and the
+event would carry the *caller's* email, wrong when someone books for another owner; (2) a User
+Service syncing Keycloak and a local user copy in Notification — eventual consistency means the
+reservation event can overtake the user data (a race that exists with any periodic *or* on-demand
+sync; only embedding the data or querying synchronously removes it); (3) a synchronous REST call
+inside the consumer — couples consumption to Keycloak's availability. Chosen: an **Inbox** — the
+listener only records the event as `PENDING` and a worker resolves the email at send time. No copy
+to go stale, no PII in Kafka, no race, and Keycloak being down delays a notification instead of
+losing it. The User Service is deferred, not cancelled.
+
+**Contract change**: `ReservationCreatedEvent` gained `ownerSubject` (needed for the lookup); it is
+`@Nullable` because earlier events lack it — those become `FAILED` immediately.
+
+**Listener = idempotent insert** (`event_id` UNIQUE, `ON CONFLICT DO NOTHING`), same as Audit.
+
+**Worker, three steps**: claim (short tx, `FOR UPDATE SKIP LOCKED`, `next_attempt_at` pushed forward
+by `claimTimeout` — the lease, so no `PROCESSING` state and a crashed worker's row just becomes due
+again), work outside any transaction (Keycloak + send), close (short tx). Deliberately **not**
+`@Transactional`: one transaction would hold a pooled connection and the row lock across the HTTP
+calls, and on failure would roll back the attempt counter and the backoff, retrying forever. The
+orchestrator `NotificationWorker` is therefore a plain component, and the short transactions live
+in `NotificationWriteService` (`claimNextDue`, `markSent`, `markFailed`, `recordTransientFailure`),
+called through the proxy — the same orchestrator/write-service split as `ReservationService`/
+`ReservationWriteService`. (A first version used `TransactionTemplate` to keep the worker in one
+file; replaced to follow the project's existing convention.) The attempt is counted at *claim*, and `claimNextDue` fails a row that comes back
+with its attempts already used up (`Lease expired after max attempts`) — otherwise `maxAttempts` would
+only be checked in `recordTransientFailure`, which a worker that keeps dying never reaches, and the row
+would be re-claimed (and re-sent) every `claimTimeout` forever. `markSent` runs *outside* the
+send's try block: if only recording the success fails, it must not be classified as a send failure (on
+the last attempt it would label a delivered notification `FAILED`); it propagates and the lease retries it.
+At-least-once: a crash after the send but before the
+close sends again once the lease expires.
+
+**Retries from yaml**: `NotificationProperties(maxAttempts=5, backoff=30s, claimTimeout=60s)`
+(`slotwise.notification.*`), same pattern as `ReservationProperties`. Fixed backoff, not
+exponential. Permanent failures (unknown user, no email, missing `ownerSubject`) skip retries;
+network errors and 5xx are transient.
+
+**Keycloak client**: a declarative `@HttpExchange` interface (`KeycloakApi`) built on `RestClient`
+(`spring-boot-starter-restclient`; no web *server*, `web-application-type: none`), wrapped by
+`KeycloakUserClient` which maps HTTP errors to permanent/transient. A first version used the JDK
+`HttpClient` to avoid the dependency; replaced because the declarative client is the idiomatic
+Spring way and Boot configures timeouts (`spring.http.client.*`) on it. Read-only service account
+(`notification-service-client`, role `view-users`); the token is requested on every lookup (cache
+it if lookups get frequent). Tests run `KeycloakUserClient` against a JDK `HttpServer` stub.
+
+**`@Scheduled` initial delay**: the first poll fired immediately at startup and raced a test's
+freshly inserted row; `initialDelayString` = one poll interval.
+
+**Deliberately not done**: a real email provider (the sender only logs), exponential backoff, token
+caching, a dead-letter topic, a read API for notifications, the User Service.
+
+**Found in the real run — topic created with 1 partition**: after recreating the Kafka container,
+audit/notification (started with booking) were assigned only partition 0 while the topic had 3, so an
+event keyed to partition 1 sat unseen until a metadata refresh. Cause: the first consumer to subscribe
+auto-created the topic with the broker default (1 partition); booking's `NewTopic` then expanded it.
+Fix: `allow.auto.create.topics: false` on the consumers of audit-service and notification-service, so
+only booking-service (which declares the topic) creates it. Verified by starting the consumers *first*
+against an empty broker: no topic until booking started, then all three groups got partitions 0-2.

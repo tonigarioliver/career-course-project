@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: notification-service
+  main:
+    web-application-type: none
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:slotwise_notification}
+    username: ${DB_USER:slotwise_notification}
+    password: ${DB_PASSWORD:slotwise_notification}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  http:
+    clients:
+      connect-timeout: 5s
+      read-timeout: 5s
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+    consumer:
+      group-id: notification-service
+      auto-offset-reset: earliest
+      # ErrorHandlingDeserializer: an undeserializable record becomes a skippable error instead of
+      # being retried forever and blocking everything behind it (see audit-service).
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+        spring.json.trusted.packages: com.slotwise.events
+        # Never auto-create the topic: whichever consumer subscribed first on a fresh broker created it
+        # with 1 partition (broker default) before booking-service's NewTopic made it 3, and consumers
+        # only notice new partitions after a metadata refresh (up to 5 min) — events on partitions 1-2
+        # were silently delayed. booking-service owns the topic; consumers wait until it exists.
+        allow.auto.create.topics: false
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p %-40.40logger{39} : %m%n"
+
+slotwise:
+  notification:
+    max-attempts: 5
+    backoff: 30s
+    claim-timeout: 60s
+    poll-interval: 1s
+  keycloak:
+    base-url: ${KEYCLOAK_BASE_URL:http://localhost:8081}
+    realm: slotwise
+    client-id: notification-service-client
+    client-secret: ${KEYCLOAK_CLIENT_SECRET:notification-service-secret}

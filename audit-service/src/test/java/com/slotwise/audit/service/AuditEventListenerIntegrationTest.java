@@ -84,7 +84,7 @@ class AuditEventListenerIntegrationTest {
 
     private void publish(final Long reservationId, final Long resourceId) {
         this.kafkaTemplate.send(ReservationCreatedEvent.TOPIC, resourceId.toString(),
-                new ReservationCreatedEvent(reservationId, resourceId,
+                new ReservationCreatedEvent(reservationId, resourceId, "owner-" + resourceId,
                         Instant.parse("2026-05-01T10:00:00Z"), Instant.parse("2026-05-01T11:00:00Z")));
     }
 

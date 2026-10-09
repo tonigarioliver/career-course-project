@@ -10,7 +10,9 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   **not** extend `spring-boot-starter-parent`. Modules: `slotwise-events` (plain jar — the
   Kafka wire contract, `ReservationCreatedEvent` + topic name, shared by every service),
   `booking-service`, and `audit-service` (port 8082: consumes `reservation-events` into its
-  own `slotwise_audit` database, admin-only `GET /api/audit-events`).
+  own `slotwise_audit` database, admin-only `GET /api/audit-events`), and `notification-service`
+  (no HTTP API, so no port: consumes `reservation-events` into an inbox table; a worker resolves the
+  owner's email from Keycloak and "sends" it, with configurable retries).
 - `booking-service`: Spring Boot 4 app, Java 25, Postgres via Spring Data JPA.
   - `data/` — JPA entities (`Resource`, `Reservation`, `ReservationStatus`) + repositories
   - `model/` — request/response records/DTOs (`CreateResourceRequest`, `ResourceDto`, etc.)
@@ -23,6 +25,12 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   `controller/`, `security/`); dedupe is a UNIQUE `event_id` + `INSERT ... ON CONFLICT DO NOTHING`.
   Its DB/user are created by `postgres/audit-init.sh` (fresh volume only — on an existing
   volume run `docker compose exec postgres bash /docker-entrypoint-initdb.d/audit-init.sh` once).
+- `notification-service` follows the same layout (`data/`, `service/`, `config/`); Inbox pattern —
+  see decisions.md. Its DB/user come from `postgres/notification-init.sh` (fresh volume only; on an
+  existing volume run `docker compose exec postgres bash /docker-entrypoint-initdb.d/notification-init.sh`
+  once). It calls Keycloak's admin API with the service account `notification-service-client`
+  (`keycloak/realm-export.json`, role `view-users`): after editing the realm file you must
+  `docker compose up -d --force-recreate keycloak`.
 - `docker-compose.yml` — local Postgres 17 (`slotwise`/`slotwise`/`slotwise`) and
   Keycloak 26 (OIDC Authorization Server, port `8081`, realm auto-imported from
   `keycloak/realm-export.json` via `--import-realm`).
@@ -114,6 +122,19 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   `@AutoConfigureMockMvc` in `org.springframework.boot.webmvc.test.autoconfigure`.
 - A `@Modifying` repository method needs an active transaction; calling it from a test outside
   one throws "No active transaction" — seed with `JdbcClient` or `@Transactional`.
+- **`@Scheduled` fires immediately on startup unless given an `initialDelay`**, racing anything that
+  starts at the same time. In `NotificationWorker` the first poll raced a test's seeded row (the
+  worker's `SKIP LOCKED` claim made the test see "nothing due"); `initialDelayString` = one poll
+  interval fixed it.
+- **`ReservationCreatedEvent.ownerSubject` is `@Nullable`** — events published before it existed
+  deserialize with `null`. Consumers needing it (notification-service) must treat null as "unknown
+  owner" and fail the row, not retry.
+- **On a fresh Kafka broker, a consumer that subscribes first auto-creates the topic with 1
+  partition** (broker default) before `booking-service`'s `NewTopic` makes it 3; consumers only
+  notice new partitions after a metadata refresh (up to 5 min), so events on partitions 1-2 were
+  silently delayed (seen in the real run: audit/notification assigned only partition 0). Fixed with
+  `allow.auto.create.topics: false` on audit/notification's consumers — `booking-service` owns the
+  topic and consumers wait until it exists.
 - Session/terminal history for this project has been lost before mid-session. This file
   plus git commits (once initialized) are the durable record — prefer committing working
   states over relying on conversation recovery.
@@ -162,6 +183,12 @@ The rest of the roadmap past Kubernetes was not recovered — if the user refere
   (the "why", including what was deliberately left out), `docs-site/docs/roadmap.md`
   (tick/partial the item), and this file's "Known gotchas" if it cost debugging time.
   Don't commit code without the docs.
+- **Transaction boundaries: orchestrator without `@Transactional` + a `@Service` with public
+  `@Transactional` methods** (`ReservationService`→`ReservationWriteService`,
+  `OutboxRelay`→`OutboxPublishService`, `NotificationWorker`→`NotificationWriteService`). Don't use
+  `TransactionTemplate`, and don't call a `@Transactional` method of the same class (it bypasses the
+  proxy). Needed whenever work that must stay outside a transaction (HTTP, messaging) sits between
+  two transactions.
 - Follow the user's global Java/Spring `static`/domain-modeling guidelines in
   `~/.claude/CLAUDE.md` for all code in this repo.
 - Follow the backend best-practices notes in `~/Downloads/code/back/` (dto-patterns.md,
