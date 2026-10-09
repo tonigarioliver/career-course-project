@@ -135,6 +135,11 @@ The rest of the roadmap past Kubernetes was not recovered — if the user refere
 
 ## Conventions
 
+- **Docs travel with the code.** Any change that adds/changes behavior, a design decision,
+  a gotcha or a roadmap item must update, in the same commit: `docs-site/docs/decisions.md`
+  (the "why", including what was deliberately left out), `docs-site/docs/roadmap.md`
+  (tick/partial the item), and this file's "Known gotchas" if it cost debugging time.
+  Don't commit code without the docs.
 - Follow the user's global Java/Spring `static`/domain-modeling guidelines in
   `~/.claude/CLAUDE.md` for all code in this repo.
 - Follow the backend best-practices notes in `~/Downloads/code/back/` (dto-patterns.md,
