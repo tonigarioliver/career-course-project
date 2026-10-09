@@ -126,6 +126,11 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   starts at the same time. In `NotificationWorker` the first poll raced a test's seeded row (the
   worker's `SKIP LOCKED` claim made the test see "nothing due"); `initialDelayString` = one poll
   interval fixed it.
+- **Postgres grants `CONNECT` on every new database to `PUBLIC`**, so by default `slotwise_audit`'s role
+  could log into `slotwise_notification`. The init scripts now `REVOKE CONNECT ... FROM PUBLIC`
+  (found when testing a from-scratch volume). Databases created by an older version of the scripts on an
+  existing volume need it once by hand: `docker compose exec postgres psql -U slotwise -d slotwise -c
+  "REVOKE CONNECT ON DATABASE slotwise_audit FROM PUBLIC"` (same for `slotwise_notification`).
 - **`ReservationCreatedEvent.ownerSubject` is `@Nullable`** — events published before it existed
   deserialize with `null`. Consumers needing it (notification-service) must treat null as "unknown
   owner" and fail the row, not retry.

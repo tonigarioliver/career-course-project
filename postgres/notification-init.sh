@@ -7,4 +7,6 @@ set -e
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     CREATE ROLE slotwise_notification WITH LOGIN PASSWORD 'slotwise_notification';
     CREATE DATABASE slotwise_notification OWNER slotwise_notification;
+    -- Postgres grants CONNECT to PUBLIC by default; without this any other service's role could log into this database.
+    REVOKE CONNECT ON DATABASE slotwise_notification FROM PUBLIC;
 EOSQL

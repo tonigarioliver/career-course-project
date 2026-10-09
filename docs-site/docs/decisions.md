@@ -1243,7 +1243,9 @@ header, so messages already in a local topic stop deserializing — clear the to
 matters — no shared tables, no ability to read the other service's — without a second
 container; maps cleanly onto "a managed Postgres per service" in Fase 6. A separate schema was
 rejected as discipline only; a separate container as more cost than this stage needs.
-`postgres/audit-init.sh` only runs on a fresh volume.
+`postgres/audit-init.sh` only runs on a fresh volume. It also does `REVOKE CONNECT ... FROM PUBLIC`: without it
+Postgres lets any role connect to any database, so "own database + own user" would not have isolated anything
+(caught when testing a from-scratch volume; the same applies to `slotwise_notification`).
 
 **Idempotency by UNIQUE constraint**: `audit_event.event_id` (`reservation-created:<id>`) is
 UNIQUE and the listener does `INSERT ... ON CONFLICT DO NOTHING`, so the audit table is its own

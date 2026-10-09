@@ -9,4 +9,6 @@ set -e
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     CREATE ROLE slotwise_audit WITH LOGIN PASSWORD 'slotwise_audit';
     CREATE DATABASE slotwise_audit OWNER slotwise_audit;
+    -- Postgres grants CONNECT to PUBLIC by default; without this any other service's role could log into this database.
+    REVOKE CONNECT ON DATABASE slotwise_audit FROM PUBLIC;
 EOSQL
