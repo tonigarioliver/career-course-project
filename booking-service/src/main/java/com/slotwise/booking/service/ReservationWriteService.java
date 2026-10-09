@@ -1,5 +1,6 @@
 package com.slotwise.booking.service;
 
+import com.slotwise.events.ReservationCreatedEvent;
 import com.slotwise.booking.config.ReservationProperties;
 import com.slotwise.booking.data.OutboxEvent;
 import com.slotwise.booking.data.OutboxEventRepository;

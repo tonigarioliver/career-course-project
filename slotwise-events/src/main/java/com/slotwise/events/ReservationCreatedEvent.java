@@ -1,4 +1,4 @@
-package com.slotwise.booking.service;
+package com.slotwise.events;
 
 import java.time.Instant;
 

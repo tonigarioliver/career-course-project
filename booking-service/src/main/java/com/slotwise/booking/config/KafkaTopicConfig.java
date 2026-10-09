@@ -1,6 +1,6 @@
 package com.slotwise.booking.config;
 
-import com.slotwise.booking.service.ReservationCreatedEvent;
+import com.slotwise.events.ReservationCreatedEvent;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

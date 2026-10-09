@@ -13,7 +13,9 @@
     <description>Booking/reservations platform used as a course project across the backend roadmap</description>
 
     <modules>
+        <module>slotwise-events</module>
         <module>booking-service</module>
+        <module>audit-service</module>
     </modules>
 
     <properties>
@@ -42,6 +44,22 @@
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <version>${spring-boot.version}</version>
+                </plugin>
+                <!-- Hoisted from booking-service: this project doesn't extend spring-boot-starter-parent,
+                     so -parameters and the Lombok annotation processor wiring have to be declared
+                     here once for every module (see AGENTS.md gotchas). -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration>
+                        <parameters>true</parameters>
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>

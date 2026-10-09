@@ -1,5 +1,6 @@
 package com.slotwise.booking.service;
 
+import com.slotwise.events.ReservationCreatedEvent;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 

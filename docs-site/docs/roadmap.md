@@ -146,6 +146,11 @@ Project target: add user cache, rate limiting, sessions.
 Project target: split into User Service / Notification Service / Audit Service
 communicating via Kafka.
 
+- [x] **Audit Service** — own module, consumer group and database; idempotent consumer;
+      admin-only read endpoint. Shared contract in `slotwise-events`. See decisions.md.
+- [ ] Notification Service.
+- [ ] User Service.
+
 ## Fase 5 (Meses 8-9) — Docker
 
 - [ ] Dockerfile, Layers, Multi-stage builds, Volumes, Networks, Healthchecks.

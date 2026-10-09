@@ -1223,3 +1223,57 @@ event (it blocks the queue until fixed); cleanup of published `outbox_event` and
 `processed_event` rows (both grow forever); Debezium/CDC instead of polling; a test that
 sends the *same* message twice end to end (the listener has nothing observable to count
 until it does real work — Notification/Audit).
+
+## Audit service: first service split (Fase 4)
+
+First of the User / Notification / Audit split, chosen first because it needs no data from any
+other service. Design spec: `docs/superpowers/specs/2026-10-09-audit-service-design.md`.
+
+**Shared contract as a Maven module (`slotwise-events`)**, not per-service copies of the record
+and not a schema registry. One definition, so a contract change is a compile error in every
+service. Cost: services are coupled by module version — a breaking change to the event forces
+all of them to move together. Per-service copies (deserialize by JSON shape) would be the lower-
+coupling choice for separate teams; Avro/JSON Schema + a registry is what production uses to
+evolve contracts safely, but is a whole extra piece of infrastructure for two services.
+Moving the record to a new package changes the class name `JsonSerializer` writes in its type
+header, so messages already in a local topic stop deserializing — clear the topic.
+
+**Own database in the same Postgres instance** (`slotwise_audit`, own user): the isolation that
+matters — no shared tables, no ability to read the other service's — without a second
+container; maps cleanly onto "a managed Postgres per service" in Fase 6. A separate schema was
+rejected as discipline only; a separate container as more cost than this stage needs.
+`postgres/audit-init.sh` only runs on a fresh volume.
+
+**Idempotency by UNIQUE constraint**: `audit_event.event_id` (`reservation-created:<id>`) is
+UNIQUE and the listener does `INSERT ... ON CONFLICT DO NOTHING`, so the audit table is its own
+processed-events record (no `processed_event` table like booking-service has). One atomic
+statement, so concurrent duplicate deliveries can't both pass an "exists?" check. Unlike
+booking-service's listener, this is observable, so the test publishes the same event twice and
+asserts one row.
+
+**`ErrorHandlingDeserializer` + Jackson 3 serializers**: found while writing the tests. A bare
+`JsonDeserializer` makes the container retry an undeserializable record forever and blocks every
+event behind it; wrapped in `ErrorHandlingDeserializer` it becomes a skippable error (test:
+publish garbage, then a valid event, the valid one is stored). And Spring Kafka's legacy
+`JsonSerializer` (Jackson 2) couldn't serialize `Instant` here — audit uses
+`JacksonJsonSerializer`/`JacksonJsonDeserializer`, and `booking-service` was migrated to the same
+pair afterwards (it had only worked because `jackson-datatype-jsr310` happened to be on its
+classpath; same JSON on the wire, so no topic reset needed). `booking-service`'s listener still
+lacks `ErrorHandlingDeserializer` — follow-up.
+
+**Auth**: OAuth2 Resource Server, role `RESERVATION_ADMIN` via `@PreAuthorize`, same shape as
+booking-service minus rate limiting. An audit log shouldn't be readable by anyone. Duplicated
+`SecurityConfig`/`Roles` for now; extract to a shared module when a third service needs them.
+
+**Endpoint**: `GET /api/audit-events?resourceId=&page=&size=`, newest first (`ORDER BY id DESC`
+so pages are deterministic), reads straight into `AuditEventDto` via a JPQL constructor
+expression. An unknown `resourceId` returns an empty page, not 404. An unknown `?sort=` property
+(appended by Spring Data to the JPQL `ORDER BY`, so Hibernate throws) is a 400 via a
+`GlobalExceptionHandler` that matches only Hibernate's `PathElementException` in the cause chain;
+any other `InvalidDataAccessApiUsageException` is rethrown so a server bug stays a 500.
+
+**Compiler config hoisted to the parent `pluginManagement`** (`-parameters` + Lombok
+annotation processor) so new modules inherit it instead of re-hitting the gotchas in AGENTS.md.
+
+**Deliberately not done**: dead-letter topic / retry counter, cleanup of old `audit_event` rows,
+Notification and User services, Micrometer Tracing across services, Dockerfiles (Fase 5).

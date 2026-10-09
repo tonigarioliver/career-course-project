@@ -7,7 +7,10 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
 
 - Multi-module Maven build: root `pom.xml` (packaging `pom`) imports
   `spring-boot-dependencies:4.0.1` as a BOM in `dependencyManagement` — it does
-  **not** extend `spring-boot-starter-parent`. Only module so far: `booking-service`.
+  **not** extend `spring-boot-starter-parent`. Modules: `slotwise-events` (plain jar — the
+  Kafka wire contract, `ReservationCreatedEvent` + topic name, shared by every service),
+  `booking-service`, and `audit-service` (port 8082: consumes `reservation-events` into its
+  own `slotwise_audit` database, admin-only `GET /api/audit-events`).
 - `booking-service`: Spring Boot 4 app, Java 25, Postgres via Spring Data JPA.
   - `data/` — JPA entities (`Resource`, `Reservation`, `ReservationStatus`) + repositories
   - `model/` — request/response records/DTOs (`CreateResourceRequest`, `ResourceDto`, etc.)
@@ -16,6 +19,10 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   - `controller/` — REST controllers + `GlobalExceptionHandler` (`@ControllerAdvice`)
   - `security/` — `SecurityConfig` (OAuth2 Resource Server + `@EnableMethodSecurity`,
     JWT → `ROLE_*` authority mapping off Keycloak's `realm_access.roles` claim)
+- `audit-service` mirrors `booking-service`'s layout (`data/`, `model/`, `service/`,
+  `controller/`, `security/`); dedupe is a UNIQUE `event_id` + `INSERT ... ON CONFLICT DO NOTHING`.
+  Its DB/user are created by `postgres/audit-init.sh` (fresh volume only — on an existing
+  volume run `docker compose exec postgres bash /docker-entrypoint-initdb.d/audit-init.sh` once).
 - `docker-compose.yml` — local Postgres 17 (`slotwise`/`slotwise`/`slotwise`) and
   Keycloak 26 (OIDC Authorization Server, port `8081`, realm auto-imported from
   `keycloak/realm-export.json` via `--import-realm`).
@@ -92,6 +99,21 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   needs `docker compose up -d --force-recreate keycloak` — `--import-realm` skips a
   realm that already exists by name, and there's no named volume for Keycloak's own
   storage so recreating the container clears it.
+- **Spring Kafka's legacy `JsonSerializer`/`JsonDeserializer` use Jackson 2**, which can't
+  serialize `java.time.Instant` unless `jackson-datatype-jsr310` happens to be on the
+  classpath (`audit-service` failed with "Java 8 date/time type `java.time.Instant` not
+  supported"; `booking-service` only worked by classpath accident). Both services now use the
+  Jackson-3 ones — `JacksonJsonSerializer`/`JacksonJsonDeserializer`
+  (`org.springframework.kafka.support.serializer`) — same JSON on the wire, same
+  `spring.json.trusted.packages` property.
+- **A bare Kafka `JsonDeserializer` loops forever on an undeserializable record**, blocking
+  everything behind it. Wrap it in `ErrorHandlingDeserializer` (+
+  `spring.deserializer.value.delegate.class`) as `audit-service` does. `booking-service`'s
+  listener doesn't yet.
+- **MockMvc test support is its own Boot 4 module**: `spring-boot-starter-webmvc-test`, with
+  `@AutoConfigureMockMvc` in `org.springframework.boot.webmvc.test.autoconfigure`.
+- A `@Modifying` repository method needs an active transaction; calling it from a test outside
+  one throws "No active transaction" — seed with `JdbcClient` or `@Transactional`.
 - Session/terminal history for this project has been lost before mid-session. This file
   plus git commits (once initialized) are the durable record — prefer committing working
   states over relying on conversation recovery.

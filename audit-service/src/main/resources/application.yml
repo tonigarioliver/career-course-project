@@ -1,0 +1,41 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: audit-service
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8081/realms/slotwise}
+  datasource:
+    # Own database + own user, same Postgres instance as booking-service (see postgres/audit-init.sh).
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:slotwise_audit}
+    username: ${DB_USER:slotwise_audit}
+    password: ${DB_PASSWORD:slotwise_audit}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+    consumer:
+      # Own group: every message reaches Audit independently of booking-service's listener.
+      group-id: audit-service
+      auto-offset-reset: earliest
+      # ErrorHandlingDeserializer wraps the JSON one so a payload that can't be deserialized
+      # becomes a skippable error; a bare JsonDeserializer would make the container retry the same
+      # poison record forever and block every event behind it.
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+        spring.json.trusted.packages: com.slotwise.events
+  flyway:
+    enabled: true
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p %-40.40logger{39} : %m%n"

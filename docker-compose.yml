@@ -11,6 +11,8 @@ services:
       - slotwise-postgres:/var/lib/postgresql/data
       # Only runs on a fresh (empty) data dir — see postgres/primary-init.sh for why.
       - ./postgres/primary-init.sh:/docker-entrypoint-initdb.d/primary-init.sh:ro
+      # audit-service's own database + user (Fase 4); same fresh-volume-only caveat.
+      - ./postgres/audit-init.sh:/docker-entrypoint-initdb.d/audit-init.sh:ro
 
   # Streaming replication read replica — Fase 2 "Replication (Read Replicas,
   # Primary-Replica)". Hot standby: read-only, continuously replaying the primary's WAL.
