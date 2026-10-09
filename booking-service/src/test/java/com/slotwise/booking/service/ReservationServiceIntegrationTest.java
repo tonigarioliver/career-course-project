@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -22,6 +23,8 @@ import com.slotwise.booking.model.CreateReservationRequest;
 import com.slotwise.booking.model.CreateResourceRequest;
 import com.slotwise.booking.model.ReservationDto;
 import com.slotwise.booking.model.ResourceDto;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
 import static org.awaitility.Awaitility.await;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +38,8 @@ import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.data.domain.Pageable;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.DefaultKafkaProducerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
@@ -158,6 +163,31 @@ class ReservationServiceIntegrationTest {
                 assertThat(this.outboxEventRepository.findAll())
                         .anyMatch(row -> row.getMessageKey().equals(resource.id().toString())
                                 && row.getPublishedAt() != null));
+    }
+
+    // A record that can't be deserialized must not wedge the consumers: without ErrorHandlingDeserializer the
+    // container retries it forever and no later event on that partition is ever delivered.
+    @Test
+    void poisonMessage_doesNotBlockLaterEvents() throws Exception {
+        final var rawFactory = new DefaultKafkaProducerFactory<String, byte[]>(
+                Map.of("bootstrap.servers", kafka.getBootstrapServers()), new StringSerializer(), new ByteArraySerializer());
+        try {
+            // .get(): the poison must be on the topic before the valid event is published.
+            new KafkaTemplate<>(rawFactory).send(ReservationCreatedEvent.TOPIC, "poison-key", "not-json".getBytes()).get();
+        } finally {
+            rawFactory.destroy();
+        }
+
+        final ResourceDto resource = this.resourceService.create(
+                CreateResourceRequest.builder().name("Room Poison").build());
+        final ReservationDto reservation = this.reservationService.create(ADMIN, CreateReservationRequest.builder()
+                .resourceId(resource.id())
+                .startTime(Instant.parse("2026-05-01T10:00:00Z"))
+                .endTime(Instant.parse("2026-05-01T11:00:00Z"))
+                .ownerSubject("user-poison")
+                .build());
+
+        assertThat(this.pollForReservation(reservation.id()).resourceId()).isEqualTo(resource.id());
     }
 
     // The production ReservationEventListener marks every event it handles; this proves it ran

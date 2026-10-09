@@ -1261,8 +1261,9 @@ publish garbage, then a valid event, the valid one is stored). And Spring Kafka'
 `JsonSerializer` (Jackson 2) couldn't serialize `Instant` here — audit uses
 `JacksonJsonSerializer`/`JacksonJsonDeserializer`, and `booking-service` was migrated to the same
 pair afterwards (it had only worked because `jackson-datatype-jsr310` happened to be on its
-classpath; same JSON on the wire, so no topic reset needed). `booking-service`'s listener still
-lacks `ErrorHandlingDeserializer` — follow-up.
+classpath; same JSON on the wire, so no topic reset needed). `booking-service`'s listener
+got `ErrorHandlingDeserializer` in a follow-up (test `poisonMessage_doesNotBlockLaterEvents`: without it the
+consumers wedge on the garbage record and the next valid event is never delivered).
 
 **Auth**: OAuth2 Resource Server, role `RESERVATION_ADMIN` via `@PreAuthorize`, same shape as
 booking-service minus rate limiting. An audit log shouldn't be readable by anyone. Duplicated

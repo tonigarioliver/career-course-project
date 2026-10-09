@@ -116,8 +116,8 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   `spring.json.trusted.packages` property.
 - **A bare Kafka `JsonDeserializer` loops forever on an undeserializable record**, blocking
   everything behind it. Wrap it in `ErrorHandlingDeserializer` (+
-  `spring.deserializer.value.delegate.class`) as `audit-service` does. `booking-service`'s
-  listener doesn't yet.
+  `spring.deserializer.value.delegate.class`) — all three services do, each with a test that publishes
+  garbage and then a valid event.
 - **MockMvc test support is its own Boot 4 module**: `spring-boot-starter-webmvc-test`, with
   `@AutoConfigureMockMvc` in `org.springframework.boot.webmvc.test.autoconfigure`.
 - A `@Modifying` repository method needs an active transaction; calling it from a test outside

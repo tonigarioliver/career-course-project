@@ -38,8 +38,11 @@ spring:
       # the first time this group-id ever runs, and then means "don't skip whatever was
       # published before this consumer happened to start" instead of silently missing it.
       auto-offset-reset: earliest
-      value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+      # ErrorHandlingDeserializer wraps the JSON one so an undeserializable record becomes a skippable error;
+      # a bare deserializer makes the container retry the same record forever and block everything behind it.
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
       properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
         spring.json.trusted.packages: com.slotwise.events
   flyway:
     # Flyway migrates the primary (autowires the @Primary DataSource bean too, but that's

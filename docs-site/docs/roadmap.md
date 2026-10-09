@@ -154,8 +154,8 @@ communicating via Kafka.
       is client-supplied, so any `RESERVATION_USER` can make notification-service email any Keycloak
       user by putting their id in a reservation. Fix: take it from the caller's JWT `sub`; only
       `RESERVATION_ADMIN` may book on behalf of another owner (then the body field is honoured).
-- [ ] `ErrorHandlingDeserializer` on `booking-service`'s Kafka listener (a poison record currently
-      blocks it; audit/notification already have it) — planned as its own later commit.
+- [x] `ErrorHandlingDeserializer` on `booking-service`'s Kafka listener (a poison record used to block it;
+      now all three services skip it). Test: `poisonMessage_doesNotBlockLaterEvents`.
 - [ ] User Service — **deferred**: not needed to notify (Keycloak already owns user data, and the
       Inbox worker looks the user up at send time). Revisit if the system needs user-owned data
       (e.g. notification preferences).
