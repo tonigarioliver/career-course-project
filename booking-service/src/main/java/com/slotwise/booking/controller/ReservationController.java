@@ -1,7 +1,9 @@
 package com.slotwise.booking.controller;
 
+import com.slotwise.booking.model.Caller;
 import com.slotwise.booking.model.CreateReservationRequest;
 import com.slotwise.booking.model.ReservationDto;
+import com.slotwise.booking.security.Roles;
 import com.slotwise.booking.service.ReservationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -9,6 +11,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,8 +29,15 @@ public class ReservationController {
 
     @PostMapping("/api/reservations")
     @ResponseStatus(HttpStatus.CREATED)
-    public ReservationDto create(@Valid @RequestBody CreateReservationRequest request) {
-        return this.reservationService.create(request);
+    public ReservationDto create(@Valid @RequestBody CreateReservationRequest request, Authentication authentication) {
+        return this.reservationService.create(caller(authentication), request);
+    }
+
+    // Translation only: who is calling and are they an admin. What that allows is decided in the service.
+    private static Caller caller(Authentication authentication) {
+        final boolean admin = authentication.getAuthorities().stream()
+                .anyMatch(authority -> authority.getAuthority().equals("ROLE_" + Roles.RESERVATION_ADMIN));
+        return new Caller(authentication.getName(), admin);
     }
 
     @GetMapping("/api/resources/{resourceId}/reservations")

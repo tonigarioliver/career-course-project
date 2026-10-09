@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 
@@ -29,7 +30,7 @@ public class KeycloakUserClient {
         } catch (RestClientException e) {
             throw new IllegalStateException("Keycloak user lookup failed: " + e.getMessage(), e);
         }
-        if (user == null || user.email() == null || user.email().isBlank()) {
+        if (user == null || !StringUtils.hasText(user.email())) {
             throw new PermanentNotificationException("Keycloak user " + subject + " has no email");
         }
         return user.email();
@@ -43,7 +44,7 @@ public class KeycloakUserClient {
         form.add("client_secret", this.keycloakProperties.clientSecret());
         try {
             final KeycloakApi.TokenResponse response = this.keycloakApi.token(this.keycloakProperties.realm(), form);
-            if (response == null || response.accessToken() == null) {
+            if (response == null || !StringUtils.hasText(response.accessToken())) {
                 throw new IllegalStateException("Keycloak token response has no access_token");
             }
             return response.accessToken();

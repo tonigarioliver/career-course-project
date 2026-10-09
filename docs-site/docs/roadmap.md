@@ -150,10 +150,9 @@ communicating via Kafka.
       admin-only read endpoint. Shared contract in `slotwise-events`. See decisions.md.
 - [x] **Notification Service** — Inbox pattern: idempotent listener + worker with configurable
       retries; the owner's email is resolved from Keycloak at send time. See decisions.md.
-- [ ] **`ownerSubject` from the token, not the request body.** Today `CreateReservationRequest.ownerSubject`
-      is client-supplied, so any `RESERVATION_USER` can make notification-service email any Keycloak
-      user by putting their id in a reservation. Fix: take it from the caller's JWT `sub`; only
-      `RESERVATION_ADMIN` may book on behalf of another owner (then the body field is honoured).
+- [x] **`ownerSubject` from the token, not the request body.** It is optional now and defaults to the caller's
+      JWT `sub`; naming another owner needs `RESERVATION_ADMIN` (`403` otherwise). Before, any
+      `RESERVATION_USER` could make notification-service email any Keycloak user. See decisions.md.
 - [x] `ErrorHandlingDeserializer` on `booking-service`'s Kafka listener (a poison record used to block it;
       now all three services skip it). Test: `poisonMessage_doesNotBlockLaterEvents`.
 - [ ] User Service — **deferred**: not needed to notify (Keycloak already owns user data, and the

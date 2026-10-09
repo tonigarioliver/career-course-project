@@ -2,6 +2,7 @@ package com.slotwise.booking.controller;
 
 import com.slotwise.booking.model.ApiErrorResponse;
 import com.slotwise.booking.service.ReservationConflictException;
+import com.slotwise.booking.service.ReservationOwnerNotAllowedException;
 import com.slotwise.booking.service.ResourceNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import java.util.stream.Collectors;
@@ -46,6 +47,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ReservationConflictException.class)
     public ResponseEntity<ApiErrorResponse> handleConflict(ReservationConflictException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiErrorResponse.builder().message(ex.getMessage()).build());
+    }
+
+    @ExceptionHandler(ReservationOwnerNotAllowedException.class)
+    public ResponseEntity<ApiErrorResponse> handleOwnerNotAllowed(ReservationOwnerNotAllowedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiErrorResponse.builder().message(ex.getMessage()).build());
     }
 

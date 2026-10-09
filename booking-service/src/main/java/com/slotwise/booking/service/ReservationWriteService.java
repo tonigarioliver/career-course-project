@@ -20,6 +20,7 @@ import org.springframework.core.convert.ConversionService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -43,6 +44,11 @@ public class ReservationWriteService {
 
     @Transactional
     public ReservationDto create(@NotNull @Valid CreateReservationRequest request) {
+        // The controller always fills the owner in; this keeps direct callers (tests, other services) from creating
+        // an ownerless reservation now that the request field is optional.
+        if (!StringUtils.hasText(request.ownerSubject())) {
+            throw new IllegalArgumentException("ownerSubject is required");
+        }
         final long durationMinutes = request.durationMinutes();
         if (durationMinutes < this.reservationProperties.minDurationMinutes()
                 || durationMinutes > this.reservationProperties.maxDurationMinutes()) {

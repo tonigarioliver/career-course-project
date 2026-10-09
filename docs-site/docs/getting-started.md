@@ -86,20 +86,20 @@ curl -s -X POST http://localhost:8080/api/resources \
   -d '{"name":"Sala A","description":"Sala de reuniones, 4 personas"}'
 ```
 
-Book a reservation (any authenticated user — either `alice` or `bob`'s token). `ownerSubject` is the
-owner's Keycloak id, i.e. the token's `sub` claim:
+Book a reservation (any authenticated user — either `alice` or `bob`'s token). The owner is **the caller**:
+`ownerSubject` can be omitted and defaults to the token's `sub` (the user's Keycloak id). Naming a different
+owner is only allowed to `RESERVATION_ADMIN` (`403` otherwise).
 
 ```bash
-SUB=$(echo "$TOKEN" | cut -d. -f2 | python3 -c 'import sys,base64,json;p=sys.stdin.read().strip();p+="="*(-len(p)%4);print(json.loads(base64.urlsafe_b64decode(p))["sub"])')
-
 curl -s -X POST http://localhost:8080/api/reservations \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"resourceId\":1,\"startTime\":\"2026-09-01T10:00:00Z\",\"endTime\":\"2026-09-01T11:00:00Z\",\"ownerSubject\":\"$SUB\"}"
+  -d '{"resourceId":1,"startTime":"2026-09-01T10:00:00Z","endTime":"2026-09-01T11:00:00Z"}'
 ```
 
-`notification-service` looks the owner up in Keycloak by that id; an `ownerSubject` that isn't a real Keycloak
-user id ends up `FAILED` instead of notified.
+To book on someone else's behalf (admin token), add `"ownerSubject":"<that user's Keycloak id>"`.
+`notification-service` looks the owner up in Keycloak by that id; an `ownerSubject` that isn't a real
+Keycloak user id ends up `FAILED` instead of notified.
 
 ### Follow the event
 
@@ -125,7 +125,8 @@ curl -s http://localhost:8080/api/resources/1/reservations \
 |-----------------------------------|----------|-----------------------------|--------------------------------|
 | `GET /api/resources`              | `401`    | `200`                       | `200`                          |
 | `POST /api/resources`             | `401`    | `403`                       | `201`                          |
-| `POST /api/reservations`          | `401`    | `201`                       | `201`                          |
+| `POST /api/reservations`          | `401`    | `201` (for themselves)      | `201`                          |
+| `POST /api/reservations` for another owner | `401` | `403`                | `201`                          |
 
 See [Decisions](decisions.md) for *why* it's wired this way (issuer discovery, the
 Keycloak → Spring role mapping, method security).

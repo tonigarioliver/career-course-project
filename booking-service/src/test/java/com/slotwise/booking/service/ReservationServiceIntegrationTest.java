@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.Objects;
 import java.util.stream.Stream;
 import com.slotwise.booking.data.OutboxEventRepository;
+import com.slotwise.booking.model.Caller;
 import com.slotwise.booking.model.CreateReservationRequest;
 import com.slotwise.booking.model.CreateResourceRequest;
 import com.slotwise.booking.model.ReservationDto;
@@ -52,6 +53,9 @@ import org.testcontainers.utility.DockerImageName;
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class ReservationServiceIntegrationTest {
+
+    // Tests that don't care about the caller act as an admin, who may name any owner.
+    private static final Caller ADMIN = new Caller("test-admin", true);
 
     @TestConfiguration
     static class ConversionServiceTestConfig {
@@ -120,6 +124,7 @@ class ReservationServiceIntegrationTest {
 
     private final ResourceService resourceService;
     private final ReservationService reservationService;
+    private final ReservationWriteService reservationWriteService;
     private final CapturingListener capturingListener;
     private final OutboxEventRepository outboxEventRepository;
     private final ProcessedEvents processedEvents;
@@ -127,13 +132,14 @@ class ReservationServiceIntegrationTest {
 
     @Autowired
     ReservationServiceIntegrationTest(
-            ResourceService resourceService, ReservationService reservationService, CapturingListener capturingListener,
+            ResourceService resourceService, ReservationService reservationService, ReservationWriteService reservationWriteService, CapturingListener capturingListener,
             OutboxEventRepository outboxEventRepository, ProcessedEvents processedEvents, JdbcClient jdbcClient) {
         this.processedEvents = processedEvents;
         this.jdbcClient = jdbcClient;
         this.outboxEventRepository = outboxEventRepository;
         this.resourceService = resourceService;
         this.reservationService = reservationService;
+        this.reservationWriteService = reservationWriteService;
         this.capturingListener = capturingListener;
     }
 
@@ -142,7 +148,7 @@ class ReservationServiceIntegrationTest {
         final ResourceDto resource = this.resourceService.create(
                 CreateResourceRequest.builder().name("Room Kafka").build());
 
-        final ReservationDto reservation = this.reservationService.create(CreateReservationRequest.builder()
+        final ReservationDto reservation = this.reservationService.create(ADMIN, CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(Instant.parse("2026-02-01T10:00:00Z"))
                 .endTime(Instant.parse("2026-02-01T11:00:00Z"))
@@ -196,7 +202,7 @@ class ReservationServiceIntegrationTest {
     void create_listenerMarksEventProcessed() {
         final ResourceDto resource = this.resourceService.create(
                 CreateResourceRequest.builder().name("Room Dedup").build());
-        final ReservationDto reservation = this.reservationService.create(CreateReservationRequest.builder()
+        final ReservationDto reservation = this.reservationService.create(ADMIN, CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(Instant.parse("2026-04-01T10:00:00Z"))
                 .endTime(Instant.parse("2026-04-01T11:00:00Z"))
@@ -227,9 +233,9 @@ class ReservationServiceIntegrationTest {
                 .endTime(Instant.parse("2026-03-01T11:00:00Z"))
                 .ownerSubject("user-outbox")
                 .build();
-        this.reservationService.create(request);
+        this.reservationService.create(ADMIN, request);
 
-        assertThatThrownBy(() -> this.reservationService.create(request))
+        assertThatThrownBy(() -> this.reservationService.create(ADMIN, request))
                 .isInstanceOf(ReservationConflictException.class);
 
         assertThat(this.outboxEventRepository.findAll())
@@ -258,6 +264,60 @@ class ReservationServiceIntegrationTest {
         }
     }
 
+    private ReservationDto bookAs(final Caller caller, final String ownerSubject, final int hour) {
+        final ResourceDto resource = this.resourceService.create(
+                CreateResourceRequest.builder().name("Room Owner " + hour).build());
+        return this.reservationService.create(caller, CreateReservationRequest.builder()
+                .resourceId(resource.id())
+                .startTime(Instant.parse("2026-06-01T00:00:00Z").plusSeconds(hour * 3600L))
+                .endTime(Instant.parse("2026-06-01T00:00:00Z").plusSeconds(hour * 3600L + 3600))
+                .ownerSubject(ownerSubject)
+                .build());
+    }
+
+    // The owner rule lives in the service: the owner is the caller unless an admin names someone else.
+    @Test
+    void create_omittedOwner_defaultsToCaller() {
+        assertThat(this.bookAs(new Caller("sub-bob", false), null, 1).ownerSubject()).isEqualTo("sub-bob");
+    }
+
+    @Test
+    void create_blankOwner_defaultsToCaller() {
+        assertThat(this.bookAs(new Caller("sub-bob", false), "  ", 2).ownerSubject()).isEqualTo("sub-bob");
+    }
+
+    @Test
+    void create_ownerEqualToCaller_isAccepted() {
+        assertThat(this.bookAs(new Caller("sub-bob", false), "sub-bob", 3).ownerSubject()).isEqualTo("sub-bob");
+    }
+
+    // The orchestrator always fills the owner in; the transactional write still refuses an ownerless request
+    // from anyone calling the write service directly.
+    @Test
+    void writeService_withoutOwner_isRejected() {
+        final ResourceDto resource = this.resourceService.create(
+                CreateResourceRequest.builder().name("Room Ownerless").build());
+
+        assertThatThrownBy(() -> this.reservationWriteService.create(CreateReservationRequest.builder()
+                .resourceId(resource.id())
+                .startTime(Instant.parse("2026-07-01T10:00:00Z"))
+                .endTime(Instant.parse("2026-07-01T11:00:00Z"))
+                .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ownerSubject");
+    }
+
+    @Test
+    void create_nonAdminNamingAnotherOwner_isRejected() {
+        assertThatThrownBy(() -> this.bookAs(new Caller("sub-bob", false), "sub-alice", 4))
+                .isInstanceOf(ReservationOwnerNotAllowedException.class);
+    }
+
+    @Test
+    void create_adminNamingAnotherOwner_isAllowed() {
+        assertThat(this.bookAs(new Caller("sub-alice", true), "sub-bob", 5).ownerSubject()).isEqualTo("sub-bob");
+    }
+
     @Test
     void create_overlappingReservation_throwsConflict() {
         final ResourceDto resource = this.resourceService.create(
@@ -266,7 +326,7 @@ class ReservationServiceIntegrationTest {
         final Instant start = Instant.parse("2026-01-01T10:00:00Z");
         final Instant end = Instant.parse("2026-01-01T11:00:00Z");
 
-        this.reservationService.create(CreateReservationRequest.builder()
+        this.reservationService.create(ADMIN, CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(start)
                 .endTime(end)
@@ -280,7 +340,7 @@ class ReservationServiceIntegrationTest {
                 .ownerSubject("user-2")
                 .build();
 
-        assertThatThrownBy(() -> this.reservationService.create(overlapping))
+        assertThatThrownBy(() -> this.reservationService.create(ADMIN, overlapping))
                 .isInstanceOf(ReservationConflictException.class);
     }
 
@@ -292,14 +352,14 @@ class ReservationServiceIntegrationTest {
         final Instant start = Instant.parse("2026-01-02T10:00:00Z");
         final Instant end = Instant.parse("2026-01-02T11:00:00Z");
 
-        this.reservationService.create(CreateReservationRequest.builder()
+        this.reservationService.create(ADMIN, CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(start)
                 .endTime(end)
                 .ownerSubject("user-1")
                 .build());
 
-        final ReservationDto backToBack = this.reservationService.create(CreateReservationRequest.builder()
+        final ReservationDto backToBack = this.reservationService.create(ADMIN, CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(end)
                 .endTime(end.plusSeconds(3600))
@@ -316,13 +376,13 @@ class ReservationServiceIntegrationTest {
         final Instant start = Instant.parse("2026-01-03T10:00:00Z");
         final Instant end = Instant.parse("2026-01-03T11:00:00Z");
 
-        final Callable<ReservationDto> createA = () -> this.reservationService.create(CreateReservationRequest.builder()
+        final Callable<ReservationDto> createA = () -> this.reservationService.create(ADMIN, CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(start)
                 .endTime(end)
                 .ownerSubject("user-A")
                 .build());
-        final Callable<ReservationDto> createB = () -> this.reservationService.create(CreateReservationRequest.builder()
+        final Callable<ReservationDto> createB = () -> this.reservationService.create(ADMIN, CreateReservationRequest.builder()
                 .resourceId(resource.id())
                 .startTime(start.plusSeconds(1800))
                 .endTime(end.plusSeconds(1800))

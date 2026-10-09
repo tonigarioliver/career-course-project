@@ -131,6 +131,9 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   (found when testing a from-scratch volume). Databases created by an older version of the scripts on an
   existing volume need it once by hand: `docker compose exec postgres psql -U slotwise -d slotwise -c
   "REVOKE CONNECT ON DATABASE slotwise_audit FROM PUBLIC"` (same for `slotwise_notification`).
+- **Reservation `ownerSubject` is the caller unless an admin names someone else** (`ReservationService.create(Caller, request)`
+  resolves it; the controller only builds the `Caller`). Don't take an owner from the request body without that check.
+  Controllers stay thin: translate HTTP, delegate; business and authorization rules live in services.
 - **`ReservationCreatedEvent.ownerSubject` is `@Nullable`** — events published before it existed
   deserialize with `null`. Consumers needing it (notification-service) must treat null as "unknown
   owner" and fail the row, not retry.
@@ -194,6 +197,10 @@ The rest of the roadmap past Kubernetes was not recovered — if the user refere
   `TransactionTemplate`, and don't call a `@Transactional` method of the same class (it bypasses the
   proxy). Needed whenever work that must stay outside a transaction (HTTP, messaging) sits between
   two transactions.
+- **A method that uses no instance state is `static`** (`private static` helpers; call them without `this.`,
+  like `SecurityConfig`'s). Overrides, framework-invoked methods (`@KafkaListener`, `@Scheduled`, interface
+  implementations) and anything touching a field stay instance methods.
+- **Use `StringUtils.hasText(s)` (`org.springframework.util`) instead of `s == null || s.isBlank()`.**
 - Follow the user's global Java/Spring `static`/domain-modeling guidelines in
   `~/.claude/CLAUDE.md` for all code in this repo.
 - Follow the backend best-practices notes in `~/Downloads/code/back/` (dto-patterns.md,

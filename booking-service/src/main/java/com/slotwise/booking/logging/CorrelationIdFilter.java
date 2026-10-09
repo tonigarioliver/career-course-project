@@ -10,6 +10,7 @@ import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
@@ -43,6 +44,6 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
 
     private static String resolveCorrelationId(HttpServletRequest request) {
         final String existing = request.getHeader(HEADER);
-        return existing != null && !existing.isBlank() ? existing : UUID.randomUUID().toString();
+        return StringUtils.hasText(existing) ? existing : UUID.randomUUID().toString();
     }
 }

@@ -1346,3 +1346,24 @@ auto-created the topic with the broker default (1 partition); booking's `NewTopi
 Fix: `allow.auto.create.topics: false` on the consumers of audit-service and notification-service, so
 only booking-service (which declares the topic) creates it. Verified by starting the consumers *first*
 against an empty broker: no topic until booking started, then all three groups got partitions 0-2.
+
+## Reservation owner comes from the token (Fase 4 follow-up)
+
+`CreateReservationRequest.ownerSubject` used to be required and taken as-is from the body, so any
+`RESERVATION_USER` could create a reservation in another user's name — harmless while it was only a column, a real
+problem once `notification-service` emails whoever the owner is (found in the notification-service review).
+
+**Now**: the field is optional and `ReservationService.create(Caller, request)` resolves it: omitted or blank -> the
+caller; equal to the caller -> accepted; anything else -> only an admin, otherwise
+`ReservationOwnerNotAllowedException` (`GlobalExceptionHandler` -> `403`). `ReservationWriteService` still rejects an
+ownerless request as a defensive invariant.
+
+**Why in the service, not the controller** (a first version had it in the controller): a controller should only translate
+HTTP, and "who may book on behalf of whom" is business/authorization logic. In the controller it needed a full MockMvc
+test with Redis, Postgres and the security chain to exercise, and any other entry point (a consumer, another endpoint)
+would not inherit the rule — which is how the hole existed. The controller now only builds a `Caller(subject, admin)`
+from the security context (so services never depend on Spring Security), and the rule is tested directly on the service
+(`ReservationServiceIntegrationTest`); `ReservationControllerOwnerTest` only checks the wiring token -> `Caller` -> HTTP
+status.
+API change: clients
+that always sent `ownerSubject` keep working as long as it is their own id.

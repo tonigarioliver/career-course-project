@@ -2,16 +2,18 @@ package com.slotwise.booking.model;
 
 import java.time.Duration;
 import java.time.Instant;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Builder;
+import org.jspecify.annotations.Nullable;
 
-@Builder
+// ownerSubject is optional: omitted or blank means "the caller"; naming someone else is only allowed to a
+// RESERVATION_ADMIN (ReservationController resolves it before the service sees the request).
+@Builder(toBuilder = true)
 public record CreateReservationRequest(
         @NotNull Long resourceId,
         @NotNull Instant startTime,
         @NotNull Instant endTime,
-        @NotBlank String ownerSubject) {
+        @Nullable String ownerSubject) {
 
     public CreateReservationRequest {
         // ponytail: null-guarded because this runs on every construction, including
