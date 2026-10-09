@@ -155,6 +155,16 @@ communicating via Kafka.
       `RESERVATION_USER` could make notification-service email any Keycloak user. See decisions.md.
 - [x] `ErrorHandlingDeserializer` on `booking-service`'s Kafka listener (a poison record used to block it;
       now all three services skip it). Test: `poisonMessage_doesNotBlockLaterEvents`.
+- [ ] **Next up (follow-ups to the Audit/Notification work, in no particular order):**
+    - Real email delivery in `NotificationSender` (today it only logs): provider + credentials, and an
+      idempotency key so an at-least-once re-send doesn't mail the user twice.
+    - Cache the Keycloak service-account token in `KeycloakUserClient` (until `expires_in`) instead of
+      requesting one per lookup.
+    - Dead-letter topic (e.g. `reservation-events.DLT`) so a record a listener gives up on is kept and
+      inspectable instead of dropped after the retries.
+    - Investigate `ResourceServiceCacheTest.update_writesThroughToCache_soNextGetByIdSkipsRepository`, which
+      failed once in a full run (stale value) and passed 3/3 alone and in later full runs.
+    - Micrometer Tracing across the services (see above), once the event flow is stable.
 - [ ] User Service — **deferred**: not needed to notify (Keycloak already owns user data, and the
       Inbox worker looks the user up at send time). Revisit if the system needs user-owned data
       (e.g. notification preferences).
