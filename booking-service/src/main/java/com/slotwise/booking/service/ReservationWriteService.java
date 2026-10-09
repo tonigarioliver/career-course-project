@@ -1,6 +1,8 @@
 package com.slotwise.booking.service;
 
 import com.slotwise.booking.config.ReservationProperties;
+import com.slotwise.booking.data.OutboxEvent;
+import com.slotwise.booking.data.OutboxEventRepository;
 import com.slotwise.booking.data.Reservation;
 import com.slotwise.booking.data.ReservationRepository;
 import com.slotwise.booking.data.ReservationStatus;
@@ -18,9 +20,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
+import tools.jackson.databind.json.JsonMapper;
 
-// Purely the transactional write — no knowledge of Pub/Sub or anything else that must happen
-// only once this commits. ReservationService (the orchestrator) calls this bean, and because
+// The transactional write, including the outbox row for the reservation-created event (Fase 4). ReservationService (the orchestrator) calls this bean, and because
 // it's a real Spring proxy call (not self-invocation), by the time create() returns here the
 // @Transactional below has already committed (or thrown, in which case the orchestrator never
 // reaches its own post-commit step). See decisions.md for why this split replaced a
@@ -35,6 +37,8 @@ public class ReservationWriteService {
     private final ResourceRepository resourceRepository;
     private final ConversionService conversionService;
     private final ReservationProperties reservationProperties;
+    private final OutboxEventRepository outboxEventRepository;
+    private final JsonMapper jsonMapper;
 
     @Transactional
     public ReservationDto create(@NotNull @Valid CreateReservationRequest request) {
@@ -70,6 +74,12 @@ public class ReservationWriteService {
         reservation.setStatus(ReservationStatus.CONFIRMED);
 
         final ReservationDto saved = this.saveAndTranslateConflict(reservation, request.resourceId());
+        // Same transaction as the reservation insert: OutboxRelay publishes this row to Kafka
+        // after commit, so a crash between commit and publish can no longer lose the event.
+        final ReservationCreatedEvent event = new ReservationCreatedEvent(
+                saved.id(), request.resourceId(), request.startTime(), request.endTime());
+        this.outboxEventRepository.save(new OutboxEvent(
+                ReservationCreatedEvent.TOPIC, request.resourceId().toString(), this.jsonMapper.writeValueAsString(event)));
         log.info("Created reservation {} for resource {} ({} - {})",
                 saved.id(), request.resourceId(), request.startTime(), request.endTime());
         return saved;

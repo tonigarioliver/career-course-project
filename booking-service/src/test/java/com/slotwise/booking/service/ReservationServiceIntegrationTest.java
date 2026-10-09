@@ -3,6 +3,7 @@ package com.slotwise.booking.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
@@ -15,11 +16,13 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.Objects;
 import java.util.stream.Stream;
+import com.slotwise.booking.data.OutboxEventRepository;
 import com.slotwise.booking.model.CreateReservationRequest;
 import com.slotwise.booking.model.CreateResourceRequest;
 import com.slotwise.booking.model.ReservationDto;
 import com.slotwise.booking.model.ResourceDto;
 import org.junit.jupiter.api.Test;
+import static org.awaitility.Awaitility.await;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -111,10 +114,13 @@ class ReservationServiceIntegrationTest {
     private final ResourceService resourceService;
     private final ReservationService reservationService;
     private final CapturingListener capturingListener;
+    private final OutboxEventRepository outboxEventRepository;
 
     @Autowired
     ReservationServiceIntegrationTest(
-            ResourceService resourceService, ReservationService reservationService, CapturingListener capturingListener) {
+            ResourceService resourceService, ReservationService reservationService, CapturingListener capturingListener,
+            OutboxEventRepository outboxEventRepository) {
+        this.outboxEventRepository = outboxEventRepository;
         this.resourceService = resourceService;
         this.reservationService = reservationService;
         this.capturingListener = capturingListener;
@@ -138,6 +144,35 @@ class ReservationServiceIntegrationTest {
         // from other test methods instead of assuming the very next one is ours.
         final ReservationCreatedEvent event = pollForReservation(reservation.id());
         assertThat(event.resourceId()).isEqualTo(resource.id());
+
+        // The relay marks the row published right after the broker ack, so it can lag the
+        // consumer seeing the message by a moment.
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(this.outboxEventRepository.findAll())
+                        .anyMatch(row -> row.getMessageKey().equals(resource.id().toString())
+                                && row.getPublishedAt() != null));
+    }
+
+    // The outbox row is written in the reservation's transaction, so a rolled-back create
+    // must not leave an event behind.
+    @Test
+    void create_conflict_leavesNoOutboxRow() {
+        final ResourceDto resource = this.resourceService.create(
+                CreateResourceRequest.builder().name("Room Outbox").build());
+        final CreateReservationRequest request = CreateReservationRequest.builder()
+                .resourceId(resource.id())
+                .startTime(Instant.parse("2026-03-01T10:00:00Z"))
+                .endTime(Instant.parse("2026-03-01T11:00:00Z"))
+                .ownerSubject("user-outbox")
+                .build();
+        this.reservationService.create(request);
+
+        assertThatThrownBy(() -> this.reservationService.create(request))
+                .isInstanceOf(ReservationConflictException.class);
+
+        assertThat(this.outboxEventRepository.findAll())
+                .filteredOn(row -> row.getMessageKey().equals(resource.id().toString()))
+                .hasSize(1);
     }
 
     // Stream.generate(this::pollNext) keeps calling poll(10s) for as long as a message keeps
