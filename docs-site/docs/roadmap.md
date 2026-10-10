@@ -158,8 +158,7 @@ communicating via Kafka.
 - [ ] **Next up (follow-ups to the Audit/Notification work, in no particular order):**
     - Real email delivery in `NotificationSender` (today it only logs): provider + credentials, and an
       idempotency key so an at-least-once re-send doesn't mail the user twice.
-    - Cache the Keycloak service-account token in `KeycloakUserClient` (until `expires_in`) instead of
-      requesting one per lookup.
+    - ~~Cache the Keycloak service-account token~~ — done (`KeycloakTokenProvider`).
     - Dead-letter topic (e.g. `reservation-events.DLT`) so a record a listener gives up on is kept and
       inspectable instead of dropped after the retries.
     - Investigate `ResourceServiceCacheTest.update_writesThroughToCache_soNextGetByIdSkipsRepository`, which

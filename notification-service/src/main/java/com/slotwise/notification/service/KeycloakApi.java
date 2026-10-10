@@ -29,7 +29,8 @@ public interface KeycloakApi {
     KeycloakUser user(@PathVariable String realm, @PathVariable String id,
             @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization);
 
-    record TokenResponse(@JsonProperty("access_token") @Nullable String accessToken) {
+    record TokenResponse(@JsonProperty("access_token") @Nullable String accessToken,
+            @JsonProperty("expires_in") @Nullable Integer expiresIn) {
     }
 
     record KeycloakUser(@Nullable String email) {

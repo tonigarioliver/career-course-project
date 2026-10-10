@@ -9,6 +9,7 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,11 @@ class KeycloakUserClientTest {
 
     private HttpServer server;
     private KeycloakUserClient client;
+    // Knobs the stub reads on every request, so a test can change what Keycloak does between two lookups.
+    private final AtomicInteger tokenRequests = new AtomicInteger();
+    private volatile String issuedToken = "tok";
+    private volatile String acceptedToken = "tok";
+    private volatile int expiresIn = 3600;
 
     @BeforeEach
     void start() throws IOException {
@@ -27,13 +33,14 @@ class KeycloakUserClientTest {
             final String form = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             if (form.contains("grant_type=client_credentials") && form.contains("client_id=nc")
                     && form.contains("client_secret=sec")) {
-                reply(exchange, 200, "{\"access_token\":\"tok\"}");
+                this.tokenRequests.incrementAndGet();
+                reply(exchange, 200, "{\"access_token\":\"" + this.issuedToken + "\",\"expires_in\":" + this.expiresIn + "}");
             } else {
                 reply(exchange, 400, "{}");
             }
         });
         this.server.createContext("/admin/realms/slotwise/users/", exchange -> {
-            if (!"Bearer tok".equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
+            if (!("Bearer " + this.acceptedToken).equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
                 reply(exchange, 401, "{}");
                 return;
             }
@@ -47,9 +54,13 @@ class KeycloakUserClientTest {
         });
         this.server.start();
         final String baseUrl = "http://localhost:" + this.server.getAddress().getPort();
-        this.client = new KeycloakUserClient(
-                new KeycloakProperties(baseUrl, "slotwise", "nc", "sec"),
-                KeycloakApi.create(RestClient.builder(), baseUrl));
+        this.client = clientFor(baseUrl, "sec");
+    }
+
+    private static KeycloakUserClient clientFor(final String baseUrl, final String clientSecret) {
+        final KeycloakProperties properties = new KeycloakProperties(baseUrl, "slotwise", "nc", clientSecret);
+        final KeycloakApi api = KeycloakApi.create(RestClient.builder(), baseUrl);
+        return new KeycloakUserClient(properties, api, new KeycloakTokenProvider(properties, api));
     }
 
     @AfterEach
@@ -90,12 +101,51 @@ class KeycloakUserClientTest {
     @Test
     void tokenRequestRejected_isTransient() {
         final String baseUrl = "http://localhost:" + this.server.getAddress().getPort();
-        final KeycloakUserClient wrongSecret = new KeycloakUserClient(
-                new KeycloakProperties(baseUrl, "slotwise", "nc", "wrong"), KeycloakApi.create(RestClient.builder(), baseUrl));
+        final KeycloakUserClient wrongSecret = clientFor(baseUrl, "wrong");
 
         // Misconfiguration (bad secret): not "no such user", so it must not be classified as permanent.
         assertThatThrownBy(() -> wrongSecret.findEmail("u1"))
                 .isInstanceOf(IllegalStateException.class)
                 .isNotInstanceOf(PermanentNotificationException.class);
+    }
+
+    @Test
+    void token_isCachedAcrossLookups() {
+        this.client.findEmail("u1");
+        this.client.findEmail("u1");
+        this.client.findEmail("u1");
+
+        assertThat(this.tokenRequests).hasValue(1);
+    }
+
+    @Test
+    void tokenAboutToExpire_isNotReused() {
+        this.expiresIn = 10; // inside the safety margin: already as good as expired
+        this.client.findEmail("u1");
+        this.client.findEmail("u1");
+
+        assertThat(this.tokenRequests).hasValue(2);
+    }
+
+    // Keycloak revoked (or rotated) the token before expires_in: one 401 must cost one refresh and a retry, not a failure.
+    @Test
+    void rejectedCachedToken_isRefreshedOnceAndRetried() {
+        this.client.findEmail("u1");
+        this.issuedToken = "tok2";
+        this.acceptedToken = "tok2";
+
+        assertThat(this.client.findEmail("u1")).isEqualTo("a@slotwise.local");
+        assertThat(this.tokenRequests).hasValue(2);
+    }
+
+    @Test
+    void freshTokenAlsoRejected_isTransientNotALoop() {
+        this.client.findEmail("u1");
+        this.acceptedToken = "nobody-has-this"; // even a freshly issued token is refused
+
+        assertThatThrownBy(() -> this.client.findEmail("u1"))
+                .isInstanceOf(IllegalStateException.class)
+                .isNotInstanceOf(PermanentNotificationException.class);
+        assertThat(this.tokenRequests).hasValue(2); // one refresh, then it gave up
     }
 }

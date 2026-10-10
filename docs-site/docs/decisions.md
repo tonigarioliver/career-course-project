@@ -1336,8 +1336,8 @@ it if lookups get frequent). Tests run `KeycloakUserClient` against a JDK `HttpS
 **`@Scheduled` initial delay**: the first poll fired immediately at startup and raced a test's
 freshly inserted row; `initialDelayString` = one poll interval.
 
-**Deliberately not done**: a real email provider (the sender only logs), exponential backoff, token
-caching, a dead-letter topic, a read API for notifications, the User Service.
+**Deliberately not done**: a real email provider (the sender only logs), exponential backoff, a dead-letter
+topic, a read API for notifications, the User Service. (Token caching was added afterwards: see below.)
 
 **Found in the real run — topic created with 1 partition**: after recreating the Kafka container,
 audit/notification (started with booking) were assigned only partition 0 while the topic had 3, so an
@@ -1367,3 +1367,14 @@ from the security context (so services never depend on Spring Security), and the
 status.
 API change: clients
 that always sent `ownerSubject` keep working as long as it is their own id.
+
+## Keycloak token cache, in its own class (Fase 4 follow-up)
+
+`KeycloakTokenProvider` owns the service-account token: it requests it with client credentials, caches it until
+`expires_in` minus a 30 s margin, and `refresh()` replaces it on demand. `KeycloakUserClient` only looks users up
+and, if Keycloak answers `401` to the cached token (revoked early, key rotated), refreshes once and retries; a `401`
+on a token that was just issued is a transient failure, not a loop. (A first version had the cache inside
+`KeycloakUserClient`, giving it two responsibilities.) `refresh()` is `synchronized` so concurrent workers don't each
+request a token. Tests count token requests against a stub server: one request across many lookups, a token about
+to expire is not reused, a rejected cached token costs one refresh. Mutation-checked: ignoring expiry and dropping the
+401 retry each make a test fail.
