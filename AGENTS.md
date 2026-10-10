@@ -134,6 +134,11 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
 - **Reservation `ownerSubject` is the caller unless an admin names someone else** (`ReservationService.create(Caller, request)`
   resolves it; the controller only builds the `Caller`). Don't take an owner from the request body without that check.
   Controllers stay thin: translate HTTP, delegate; business and authorization rules live in services.
+- **Spring Data Redis writes the cache asynchronously with Lettuce by default** (`put` is fire-and-forget), so a
+  read right after a `@CachePut` could return the old value — a real violation of the Write-Through in
+  `ResourceService`, seen as an intermittent `ResourceServiceCacheTest` failure (~2%, ~20% under CPU load). Fixed with
+  `RedisCacheWriter.create(factory, w -> w.immediateWrites())` in `CacheConfig`; test `cacheWrites_areImmediate_notFireAndForget`.
+  A repeated test with CPU burners around it is how it was reproduced.
 - **`ReservationCreatedEvent.ownerSubject` is `@Nullable`** — events published before it existed
   deserialize with `null`. Consumers needing it (notification-service) must treat null as "unknown
   owner" and fail the row, not retry.

@@ -19,7 +19,9 @@ import org.springframework.core.convert.converter.Converter;
 import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.cache.CacheManager;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -98,5 +100,18 @@ class ResourceServiceCacheTest {
         assertThat(afterUpdate).isEqualTo(updated);
         assertThat(afterUpdate.name()).isEqualTo("Renamed Room");
         verify(this.resourceRepository, Mockito.never()).findSummaryById(resource.id());
+    }
+
+    @Autowired
+    private CacheManager cacheManager;
+
+    // Lettuce makes Spring Data Redis write the cache asynchronously by default: put() returns before Redis has the value,
+    // so a read right after update() could still see the old one (the Write-Through guarantee above). Found as a ~2% flake
+    // of update_writesThroughToCache_... under CPU load. Timing can't pin it deterministically, so this checks the config.
+    @Test
+    void cacheWrites_areImmediate_notFireAndForget() {
+        final Object writer = ReflectionTestUtils.getField(this.cacheManager, "cacheWriter");
+
+        assertThat(ReflectionTestUtils.getField(writer, "asynchronousWrites")).isEqualTo(false);
     }
 }

@@ -6,6 +6,8 @@ import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
+import org.springframework.data.redis.cache.RedisCacheWriter;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 
@@ -19,9 +21,15 @@ public class CacheConfig {
     // Set here rather than spring.cache.redis.* properties because this customizer builds
     // its own RedisCacheConfiguration from scratch, which would otherwise silently drop a
     // property-configured TTL — so TTL lives here too, as the one source of truth.
+    //
+    // immediateWrites(): with Lettuce, Spring Data Redis writes the cache asynchronously by default — put() returns
+    // before Redis has the value, so a read right after an update() (Write-Through, see ResourceService) could still see
+    // the old one. Reproduced as a ~2% flake (20% under CPU load) of ResourceServiceCacheTest; writes now wait for Redis.
     @Bean
-    RedisCacheManagerBuilderCustomizer cacheConfigCustomizer() {
-        return builder -> builder.cacheDefaults(RedisCacheConfiguration.defaultCacheConfig()
+    RedisCacheManagerBuilderCustomizer cacheConfigCustomizer(final RedisConnectionFactory connectionFactory) {
+        return builder -> builder
+                .cacheWriter(RedisCacheWriter.create(connectionFactory, writer -> writer.immediateWrites()))
+                .cacheDefaults(RedisCacheConfiguration.defaultCacheConfig()
                 // Cache-Aside self-heal: a stale entry expires within 5 minutes even if an
                 // @CacheEvict call is ever missed (e.g. a direct DB write bypassing the service).
                 .entryTtl(Duration.ofMinutes(5))

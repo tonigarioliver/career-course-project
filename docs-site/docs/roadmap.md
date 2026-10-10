@@ -161,8 +161,8 @@ communicating via Kafka.
     - ~~Cache the Keycloak service-account token~~ — done (`KeycloakTokenProvider`).
     - Dead-letter topic (e.g. `reservation-events.DLT`) so a record a listener gives up on is kept and
       inspectable instead of dropped after the retries.
-    - Investigate `ResourceServiceCacheTest.update_writesThroughToCache_soNextGetByIdSkipsRepository`, which
-      failed once in a full run (stale value) and passed 3/3 alone and in later full runs.
+    - ~~Investigate the intermittent `ResourceServiceCacheTest` failure~~ — done: Redis cache writes were asynchronous
+      (`immediateWrites()` fixes it). See decisions.md.
     - Micrometer Tracing across the services (see above), once the event flow is stable.
 - [ ] User Service — **deferred**: not needed to notify (Keycloak already owns user data, and the
       Inbox worker looks the user up at send time). Revisit if the system needs user-owned data

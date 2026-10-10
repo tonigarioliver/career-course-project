@@ -1378,3 +1378,15 @@ on a token that was just issued is a transient failure, not a loop. (A first ver
 request a token. Tests count token requests against a stub server: one request across many lookups, a token about
 to expire is not reused, a rejected cached token costs one refresh. Mutation-checked: ignoring expiry and dropping the
 401 retry each make a test fail.
+
+## Cache writes must be immediate (the flaky `ResourceServiceCacheTest`)
+
+`ResourceServiceCacheTest.update_writesThroughToCache_...` had failed once in a full run (the old name came back after
+an `update`). Reproduced by repeating the test 300 times in one context: ~2% normally, 61/300 with 8 CPU burners
+running. On failure the cache held the new value *a moment later* and `getById` had not touched the database, so
+`getById` read the cache before `update()`'s write reached Redis. Cause: with a Lettuce connection factory,
+`DefaultRedisCacheWriter.put` writes asynchronously (a `CompletableFuture` it doesn't wait for) — so the
+Write-Through promise ("a read right after `update()` sees the new value") was false, and not only in tests. Fix:
+`RedisCacheWriter.create(factory, w -> w.immediateWrites())` in `CacheConfig`; after it, 0/300 twice under the same
+CPU load. A timing test can't pin it deterministically, so `cacheWrites_areImmediate_notFireAndForget` checks the
+writer's configuration (reflection on library internals, brittle but it documents why).
