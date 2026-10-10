@@ -205,6 +205,8 @@ The rest of the roadmap past Kubernetes was not recovered — if the user refere
 - **A method that uses no instance state is `static`** (`private static` helpers; call them without `this.`,
   like `SecurityConfig`'s). Overrides, framework-invoked methods (`@KafkaListener`, `@Scheduled`, interface
   implementations) and anything touching a field stay instance methods.
+- **Ternary for a choice between two values of the same type** (`return ok ? cached : load();`), even when one side calls
+  a method. Keep `if` for several statements, a `throw`, or a condition that needs its own line.
 - **Use `StringUtils.hasText(s)` (`org.springframework.util`) instead of `s == null || s.isBlank()`.**
 - Follow the user's global Java/Spring `static`/domain-modeling guidelines in
   `~/.claude/CLAUDE.md` for all code in this repo.

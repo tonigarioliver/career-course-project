@@ -25,10 +25,7 @@ public class CacheStampedeGuard {
     public <T> T getOrLoad(String cacheName, Object key, Class<T> type, Supplier<T> loader) {
         final Cache cache = Objects.requireNonNull(this.cacheManager.getCache(cacheName));
         final T cached = cache.get(key, type);
-        if (cached != null) {
-            return cached;
-        }
-        return this.loadUnderLock(cacheName, key, cache, type, loader);
+        return cached != null ? cached : this.loadUnderLock(cacheName, key, cache, type, loader);
     }
 
     // Package-private (not private) so tests can put several concurrent callers into this

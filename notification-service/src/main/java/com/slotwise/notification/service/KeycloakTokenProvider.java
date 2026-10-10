@@ -30,10 +30,7 @@ public class KeycloakTokenProvider {
     // The cached token while it is still valid, otherwise a new one.
     public String token() {
         final CachedToken cached = this.cachedToken;
-        if (cached != null && Instant.now().isBefore(cached.validUntil())) {
-            return cached.value();
-        }
-        return this.refresh();
+        return cached != null && Instant.now().isBefore(cached.validUntil()) ? cached.value() : this.refresh();
     }
 
     // Always requests a new token and replaces the cache.
