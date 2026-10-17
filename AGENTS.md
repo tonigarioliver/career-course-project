@@ -34,6 +34,8 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   once). It calls Keycloak's admin API with the service account `notification-service-client`
   (`keycloak/realm-export.json`, role `view-users`): after editing the realm file you must
   `docker compose up -d --force-recreate keycloak`.
+- `otel/collector-config.yaml` + `grafana/` — the OpenTelemetry Collector pipeline (traces, logs, metrics -> `grafana/otel-lgtm`) and the
+  provisioned dashboard (built from log lines). Services -> Collector over OTLP, never straight to a backend.
 - `docker-compose.yml` — local Postgres 17 (`slotwise`/`slotwise`/`slotwise`) and
   Keycloak 26 (OIDC Authorization Server, port `8081`, realm auto-imported from
   `keycloak/realm-export.json` via `--import-realm`).
@@ -160,6 +162,12 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   autoconfiguration fails on `MetricsProperties`. Both live in `slotwise-observability`. A trace does not survive the
   outbox by itself (relay = other thread): see `OutboxTraceContext`. Log lines are ECS JSON now (`traceId` at the top
   level), so filter with `jq` (or a log platform), not by column.
+- **Logs reach Loki through OTLP, so the log appender must match the SDK**: `opentelemetry-logback-appender-1.0` is `2.21.0-alpha`
+  because that instrumentation release is built against SDK 1.55.0 (Boot 4.0.1's); the BOM manages only the SDK. The dashboard
+  counts *log lines* (`Created reservation`, `Notification sent to`...): changing those messages silently empties a panel.
+  In tests the OTLP exporters are switched off by a `src/test/resources/application.properties` (a test `application.yml`
+  would shadow the main one). Jaeger v2's HTTP API is `/api/v3/...`, not `/api/...`; `otlp` exporter alias in the Collector is
+  deprecated (`otlp_grpc`/`otlp_http`).
 - Session/terminal history for this project has been lost before mid-session. This file
   plus git commits (once initialized) are the durable record — prefer committing working
   states over relying on conversation recovery.

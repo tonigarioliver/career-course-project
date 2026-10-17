@@ -16,6 +16,11 @@ public class ObservabilityDefaultsEnvironmentPostProcessor implements Environmen
             // Boot's default is 0.1: 9 of 10 requests would get a traceId nobody records. Fine for a learning
             // project; lower it for real traffic.
             "management.tracing.sampling.probability", "1.0",
+            // Where the spans go: the OpenTelemetry Collector from docker-compose.yml (OTLP over HTTP). Point it
+            // at another collector (e.g. an ADOT one) with this property or MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT.
+            "management.opentelemetry.tracing.export.otlp.endpoint", "http://localhost:4318/v1/traces",
+            // Logs go the same way (Logback -> OpenTelemetryAppender -> OTLP -> Collector -> Loki).
+            "management.opentelemetry.logging.export.otlp.endpoint", "http://localhost:4318/v1/logs",
             // Spans + trace propagation through the message headers, producer and listener side.
             "spring.kafka.template.observation-enabled", "true",
             "spring.kafka.listener.observation-enabled", "true",

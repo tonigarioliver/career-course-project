@@ -31,6 +31,11 @@ This brings up:
   client, two test users, and a read-only service account for `notification-service`). After editing
   `keycloak/realm-export.json`, recreate the container so the realm is re-imported:
   `docker compose up -d --force-recreate keycloak`. Admin console: `http://localhost:8081` (`admin`/`admin`).
+- **OpenTelemetry Collector** on `localhost:4317`/`4318` (OTLP gRPC/HTTP) and **Grafana** on `http://localhost:3000`
+  (no login locally): the services send their traces and logs to the Collector, which forwards them to Grafana's Tempo and
+  Loki. Open the *Slotwise — reservations & notifications* dashboard to see reservations, conflicts and notifications
+  (counted from the log lines), or *Explore* to search the logs and traces. Data is ephemeral: it disappears when the
+  `lgtm` container is recreated.
 
 Wait until `docker compose logs keycloak` shows `Keycloak ... started in ...s` before
 continuing — the realm import happens during that startup.

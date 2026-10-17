@@ -1,0 +1,9 @@
+apiVersion: 1
+
+# Extra provider next to the image's own (RED metrics, JVM): loads every dashboard JSON in /otel-lgtm/slotwise-dashboards.
+providers:
+  - name: "Slotwise"
+    type: file
+    options:
+      path: /otel-lgtm/slotwise-dashboards
+      foldersFromFilesStructure: false

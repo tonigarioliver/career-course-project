@@ -1,0 +1,32 @@
+# Receives OTLP (traces, logs, metrics) from the services and forwards everything to the Grafana LGTM image, which
+# stores traces in Tempo, logs in Loki and metrics in Prometheus. To use another backend, change `exporters` and the
+# pipelines below — the services do not change.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  otlp_http/lgtm:
+    endpoint: http://lgtm:4318
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/lgtm]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/lgtm]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/lgtm]

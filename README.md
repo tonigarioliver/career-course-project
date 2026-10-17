@@ -137,7 +137,7 @@ sequenceDiagram
 
 ## Run locally
 ```bash
-docker compose up -d      # Postgres (+replica), Redis, Kafka, Keycloak (realm auto-imported)
+docker compose up -d      # Postgres (+replica), Redis, Kafka, Keycloak (realm auto-imported), OTel Collector, Grafana (:3000)
 mvn -pl booking-service spring-boot:run
 mvn -pl audit-service spring-boot:run          # optional
 mvn -pl notification-service spring-boot:run   # optional

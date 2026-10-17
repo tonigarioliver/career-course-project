@@ -72,6 +72,32 @@ services:
     volumes:
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
 
+  # Fase 4 "observability" — where the three services send their telemetry. They speak OTLP to the Collector (4318 =
+  # OTLP/HTTP, what Spring exports by default) and never to a backend directly, so the backend can change (an AWS ADOT
+  # collector, Elastic, SigNoz...) by editing otel/collector-config.yaml only. contrib distribution because it also
+  # carries the AWS exporters (awsxray, awsemf) for later.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.163.1
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - lgtm
+
+  # Grafana (http://localhost:3000, admin/admin) + Loki (logs) + Tempo (traces) + Prometheus (metrics) in one dev
+  # image; it has its own OTLP receiver, which only the Collector talks to. Data is ephemeral (lost with the container).
+  # The dashboard under grafana/dashboards is provisioned from this repo.
+  lgtm:
+    image: grafana/otel-lgtm:0.37.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning/slotwise-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/slotwise-dashboards.yaml:ro
+      - ./grafana/dashboards:/otel-lgtm/slotwise-dashboards:ro
+
 volumes:
   slotwise-postgres:
   slotwise-postgres-replica:

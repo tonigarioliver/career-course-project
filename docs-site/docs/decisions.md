@@ -1454,7 +1454,36 @@ and reads the `traceparent` header).
 - **ECS** instead of a text pattern: JSON, one object per line, so a log platform filters by `traceId` without parsing.
   Less readable in a dev terminal; a service can override `logging.structured.format.console` (or use a profile).
 
-**Deliberately not done**: an exporter/collector (Zipkin, Tempo or an OTel Collector) to *see* the trace — the next
-step; `span.error(e)` on a failed outbox send (marked `shortcut:` in the code); lowering the sampling for real traffic;
-a manual `Observation` around the notification worker's send.
+**Deliberately not done** (traces): `span.error(e)` on a failed outbox send (marked `shortcut:` in the code); lowering
+the sampling for real traffic; a manual `Observation` around the notification worker's send.
+
+## Observability stack: Collector + Grafana LGTM, and a dashboard built from logs (Fase 4)
+
+The services speak **OTLP** to an **OpenTelemetry Collector** (`otel/collector-config.yaml`, `docker-compose.yml`) and
+never to a backend: the backend is a Collector setting, not application code. Today the Collector forwards traces, logs
+and metrics to `grafana/otel-lgtm` (Grafana :3000 + Tempo + Loki + Prometheus in one dev image, anonymous access,
+ephemeral data). An AWS setup would swap the exporter in the Collector (the contrib image already carries `awsxray`/`awsemf`)
+without touching a service. Jaeger was tried first (Collector -> Jaeger v2, traces only) and replaced because Grafana
+shows logs, traces and metrics together and links a log to its trace by `trace_id`.
+
+- **Logs travel by OTLP too**, not by scraping stdout: the services run on the host (`mvn spring-boot:run`), and one pipeline
+  is simpler than a shipper per environment. Logback gets an `OpenTelemetryAppender` (`logback-spring.xml` in
+  `slotwise-observability`, next to Boot's console appender, which keeps printing ECS JSON) and
+  `OpenTelemetryLogbackAutoConfiguration` installs the `OpenTelemetry` bean into it. Each log record carries
+  `trace_id`/`span_id`. The appender is `2.21.0-alpha` on purpose: it is the instrumentation release built against SDK
+  1.55.0, the one Boot 4.0.1 manages (the BOM does not manage the instrumentation artifacts).
+- **The dashboard comes from log lines** (`grafana/dashboards/slotwise.json`, provisioned from the repo through a second provider
+  mounted in the image): reservations created/conflicts and notifications sent/retried/failed for good are `count_over_time`
+  over lines such as `Created reservation`, `Reservation conflict`, `Notification sent to`, `failed permanently`.
+  **It breaks if those messages change** — that is the accepted price of not touching the code. Chosen over business
+  counters (`Counter` in Micrometer) for speed; counters are the robust alternative and stay open.
+- **Tests do not export**: `management.tracing.export.otlp.enabled=false` and `management.logging.export.otlp.enabled=false`
+  in each service's `src/test/resources/application.properties` (a `.properties` next to the main `application.yml` does not
+  shadow it, a test `application.yml` would). Spans and logs are still created, so the trace test keeps working.
+- **Collector type names**: `otlp_grpc` / `otlp_http` (the plain `otlp` exporter alias is deprecated in 0.163).
+
+**Deliberately not done**: application metrics (no Micrometer meters exported yet: Prometheus only has its own); alerting;
+Grafana persistence (volume) and authentication; a Loki -> Tempo "view trace" derived field (`trace_id` is on every
+record, the link is not configured); any AWS wiring (Application Signals, X-Ray, ADOT) — only the Collector seam exists.
+**Not verified**: opening the dashboard in a browser (done with the Grafana/Loki API: the numbers match the traffic sent).
 

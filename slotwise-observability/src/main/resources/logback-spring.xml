@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Boot's default console (ECS JSON, see ObservabilityDefaultsEnvironmentPostProcessor) plus an appender that hands
+     every log event to OpenTelemetry. The appender only starts shipping once OpenTelemetryLogbackAutoConfiguration
+     installs the OpenTelemetry bean into it; events logged before that are buffered. -->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/base.xml"/>
+    <appender name="OTEL" class="io.opentelemetry.instrumentation.logback.appender.v1_0.OpenTelemetryAppender"/>
+    <root level="INFO">
+        <appender-ref ref="OTEL"/>
+    </root>
+</configuration>

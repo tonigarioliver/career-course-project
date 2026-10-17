@@ -15,8 +15,12 @@
     <description>Tracing (OpenTelemetry through Micrometer Tracing) and structured ECS logs shared by the services: dependencies plus default properties</description>
 
     <dependencies>
-        <!-- Tracing: traceId/spanId in the MDC, propagated through HTTP and Kafka headers. No exporter on purpose:
-             nothing collects the spans yet, the traceId in the logs is what we use. -->
+        <!-- @AutoConfiguration and the @Conditional* annotations (OpenTelemetryLogbackAutoConfiguration). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <!-- Tracing: traceId/spanId in the MDC, propagated through HTTP and Kafka headers. OTLP export to the Collector below. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
@@ -29,6 +33,24 @@
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <!-- Ships the spans over OTLP (to the OpenTelemetry Collector, see docker-compose.yml). -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+        <!-- Captures Logback events as OpenTelemetry log records (shipped by the OTLP log exporter Spring Boot configures).
+             2.21.0-alpha is the instrumentation release built against OpenTelemetry SDK 1.55.0, the one Boot 4.0.1 manages. -->
+        <dependency>
+            <groupId>io.opentelemetry.instrumentation</groupId>
+            <artifactId>opentelemetry-logback-appender-1.0</artifactId>
+            <version>2.21.0-alpha</version>
+        </dependency>
+        <!-- Needed to compile against the appender; every service already has Logback through its starters. -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>provided</scope>
         </dependency>
         <!-- HTTP server observation (WebMvcObservationAutoConfiguration) needs MetricsProperties from here. -->
         <dependency>

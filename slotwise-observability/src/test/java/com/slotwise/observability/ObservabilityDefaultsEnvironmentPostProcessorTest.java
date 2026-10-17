@@ -20,6 +20,10 @@ class ObservabilityDefaultsEnvironmentPostProcessorTest {
         assertThat(environment.getProperty("management.tracing.sampling.probability")).isEqualTo("1.0");
         assertThat(environment.getProperty("spring.kafka.listener.observation-enabled")).isEqualTo("true");
         assertThat(environment.getProperty("logging.structured.format.console")).isEqualTo("ecs");
+        assertThat(environment.getProperty("management.opentelemetry.tracing.export.otlp.endpoint"))
+                .isEqualTo("http://localhost:4318/v1/traces");
+        assertThat(environment.getProperty("management.opentelemetry.logging.export.otlp.endpoint"))
+                .isEqualTo("http://localhost:4318/v1/logs");
     }
 
     @Test

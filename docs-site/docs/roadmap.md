@@ -136,7 +136,7 @@ Project target: add user cache, rate limiting, sessions.
 - [x] **Micrometer Tracing (OpenTelemetry) across the services** — `slotwise-observability` module: `traceId`/`spanId`
       in the logs (ECS JSON), propagated through HTTP and Kafka headers, and carried across the outbox
       (`OutboxTraceContext`). Replaced the hand-rolled `CorrelationIdFilter` (deleted). No exporter yet: see
-      decisions.md ("Tracing") for what is left (Zipkin/Tempo, error spans).
+      decisions.md ("Tracing") for what is left (error spans).
 
 Project target: split into User Service / Notification Service / Audit Service
 communicating via Kafka.
@@ -159,8 +159,11 @@ communicating via Kafka.
       (`immediateWrites()` fixes it). See decisions.md.
     - ~~Micrometer Tracing across the services~~ — done (OpenTelemetry, `slotwise-observability`, trace carried
       across the outbox; see decisions.md).
-    - An exporter/collector (Zipkin, Tempo or an OTel Collector) to actually *see* the traces: today they are
-      created and propagated, but not shipped anywhere.
+    - ~~An exporter/collector to actually *see* the traces~~ — done: OTLP -> OpenTelemetry Collector -> Grafana LGTM
+      (Tempo traces, Loki logs, Prometheus), logs also by OTLP, and a log-derived dashboard (reservations, conflicts,
+      notifications sent/failed, errors). See decisions.md ("Observability stack").
+    - Application metrics (Micrometer counters/timers exported by OTLP to Prometheus) and alerts: today the dashboard only
+      counts log lines, which breaks if a message changes.
 - [ ] User Service — **deferred**: not needed to notify (Keycloak already owns user data, and the
       Inbox worker looks the user up at send time). Revisit if the system needs user-owned data
       (e.g. notification preferences).
