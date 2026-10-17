@@ -157,7 +157,10 @@ communicating via Kafka.
     - ~~Dead-letter topic~~ — done (`reservation-events.DLT`, see decisions.md).
     - ~~Investigate the intermittent `ResourceServiceCacheTest` failure~~ — done: Redis cache writes were asynchronous
       (`immediateWrites()` fixes it). See decisions.md.
-    - Micrometer Tracing across the services (see above), once the event flow is stable.
+    - ~~Micrometer Tracing across the services~~ — done (OpenTelemetry, `slotwise-observability`, trace carried
+      across the outbox; see decisions.md).
+    - An exporter/collector (Zipkin, Tempo or an OTel Collector) to actually *see* the traces: today they are
+      created and propagated, but not shipped anywhere.
 - [ ] User Service — **deferred**: not needed to notify (Keycloak already owns user data, and the
       Inbox worker looks the user up at send time). Revisit if the system needs user-owned data
       (e.g. notification preferences).
@@ -174,7 +177,9 @@ communicating via Kafka.
 
 ## Resilience & architecture (not yet slotted into a numbered phase)
 
-- [ ] **Retry**, **Bulkhead** (Resilience4j).
+- [~] **Retry**, **Bulkhead** (Resilience4j) — Kafka consumer retries with exponential backoff are done (configurable,
+      `slotwise.kafka.retry.*`, ending on the DLT); Resilience4j `Retry`/`Bulkhead` on outgoing calls (e.g. the
+      Keycloak client) still pending.
 - [ ] **Idempotencia** (idempotency keys/handling for APIs and consumers).
 - [ ] **DDD** (Domain-Driven Design), **Hexagonal Architecture**, **Clean Architecture**.
 
