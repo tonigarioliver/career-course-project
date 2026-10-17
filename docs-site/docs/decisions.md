@@ -1390,3 +1390,31 @@ Write-Through promise ("a read right after `update()` sees the new value") was f
 `RedisCacheWriter.create(factory, w -> w.immediateWrites())` in `CacheConfig`; after it, 0/300 twice under the same
 CPU load. A timing test can't pin it deterministically, so `cacheWrites_areImmediate_notFireAndForget` checks the
 writer's configuration (reflection on library internals, brittle but it documents why).
+
+## Dead-letter topic (Fase 4)
+
+Until now none of the three consumers had an error handler, so Spring Kafka's default applied: retry the
+failing record 9 times back to back, log it, **commit the offset** — the event was gone. Now each service has a
+`KafkaErrorHandlingConfig` with a `DefaultErrorHandler`: 4 retries with exponential backoff (1s, 2s, 4s, 8s), then a
+`DeadLetterPublishingRecoverer` publishes the record to `reservation-events.DLT`
+(`ReservationCreatedEvent.DLT_TOPIC`) and the consumer moves on. The record keeps its key and carries
+`kafka_dlt-original-topic/partition/offset` and the exception as headers, so it can be inspected and replayed.
+Undeserializable records skip the retries (Spring classifies deserialization errors as not retryable) and land on the
+DLT directly.
+
+- **`byte[]` and event on one producer.** A record that failed deserialization reaches the recoverer as its raw bytes,
+  not as a `ReservationCreatedEvent`. The DLT producer uses a `DelegatingByTypeSerializer` (`byte[]` → raw,
+  event → JSON); a plain JSON serializer would fail on the poison records, the very ones the DLT exists for.
+- **Partition `-1`.** The default keeps the source partition; if the DLT had fewer partitions than the source it
+  would fail to publish. `booking-service` owns and declares the DLT (3 partitions, like the source topic), and the
+  recoverer lets the producer pick the partition anyway, so a DLT auto-created with 1 partition still works.
+- **Duplicated per service**, like the rest of the Kafka config: `slotwise-events` is a plain jar with no Spring.
+
+**Deliberately not done**: a consumer/replay tool for the DLT (inspect it with `kafka-console-consumer`); alerting on
+DLT growth; a test of a *retryable* failure (it would wait the full backoff); a DLT per consumer group — all three
+services share one topic and tell themselves apart by the `kafka_dlt-original-consumer-group` header.
+**Verified** with Testcontainers: `poisonMessage_doesNotBlockLaterEvents` (audit-service) now also reads the DLT and
+checks the original bytes and the `kafka_dlt-original-topic` header; the full suites of the three services pass.
+Found on the way: the first cut built the DLT producer from `KafkaProperties.buildProducerProperties()`, which
+connected to `localhost:9092` (a `@ServiceConnection` broker is not in `KafkaProperties`) — every test timed out.
+It now copies the config of Boot's own `DefaultKafkaProducerFactory`, which does carry it.

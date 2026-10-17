@@ -6,8 +6,15 @@ import static org.awaitility.Awaitility.await;
 import com.slotwise.events.ReservationCreatedEvent;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +23,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.KafkaHeaders;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -80,6 +88,31 @@ class AuditEventListenerIntegrationTest {
 
         await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
                 assertThat(this.count("reservation-created:4")).isEqualTo(1L));
+        // ...and the poison record was kept on the DLT, with its original bytes and the failure headers.
+        final var dead = this.readDeadLetters("30");
+        assertThat(dead).hasSize(1);
+        assertThat(new String(dead.getFirst().value())).isEqualTo("not-json");
+        assertThat(dead.getFirst().headers().lastHeader(KafkaHeaders.DLT_ORIGINAL_TOPIC)).isNotNull();
+    }
+
+    private List<ConsumerRecord<String, byte[]>> readDeadLetters(final String key) {
+        final var props = this.kafkaTemplate.getProducerFactory().getConfigurationProperties();
+        try (var consumer = new KafkaConsumer<>(
+                Map.<String, Object>of("bootstrap.servers", props.get("bootstrap.servers"),
+                        "group.id", "dlt-test-" + UUID.randomUUID(), "auto.offset.reset", "earliest"),
+                new StringDeserializer(), new ByteArrayDeserializer())) {
+            consumer.subscribe(List.of(ReservationCreatedEvent.DLT_TOPIC));
+            final var found = new ArrayList<ConsumerRecord<String, byte[]>>();
+            await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
+                consumer.poll(Duration.ofMillis(500)).forEach(r -> {
+                    if (key.equals(r.key())) {
+                        found.add(r);
+                    }
+                });
+                assertThat(found).isNotEmpty();
+            });
+            return found;
+        }
     }
 
     private void publish(final Long reservationId, final Long resourceId) {

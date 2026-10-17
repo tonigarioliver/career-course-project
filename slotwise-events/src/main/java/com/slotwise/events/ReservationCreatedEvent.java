@@ -20,4 +20,7 @@ public record ReservationCreatedEvent(
         Long reservationId, Long resourceId, @Nullable String ownerSubject, Instant startTime, Instant endTime) {
 
     public static final String TOPIC = "reservation-events";
+
+    // Where a consumer parks a record it gave up on (see each service's KafkaErrorHandlingConfig).
+    public static final String DLT_TOPIC = TOPIC + ".DLT";
 }

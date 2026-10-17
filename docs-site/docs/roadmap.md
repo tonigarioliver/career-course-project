@@ -159,8 +159,7 @@ communicating via Kafka.
     - Real email delivery in `NotificationSender` (today it only logs): provider + credentials, and an
       idempotency key so an at-least-once re-send doesn't mail the user twice.
     - ~~Cache the Keycloak service-account token~~ — done (`KeycloakTokenProvider`).
-    - Dead-letter topic (e.g. `reservation-events.DLT`) so a record a listener gives up on is kept and
-      inspectable instead of dropped after the retries.
+    - ~~Dead-letter topic~~ — done (`reservation-events.DLT`, see decisions.md).
     - ~~Investigate the intermittent `ResourceServiceCacheTest` failure~~ — done: Redis cache writes were asynchronous
       (`immediateWrites()` fixes it). See decisions.md.
     - Micrometer Tracing across the services (see above), once the event flow is stable.

@@ -21,4 +21,14 @@ public class KafkaTopicConfig {
                 .replicas(1)
                 .build();
     }
+
+    // Same 3 partitions and same owner (booking-service) as the source topic, for the same reason:
+    // consumers that dead-letter a record must not be the ones auto-creating it with 1 partition.
+    @Bean
+    NewTopic reservationEventsDeadLetterTopic() {
+        return TopicBuilder.name(ReservationCreatedEvent.DLT_TOPIC)
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
 }

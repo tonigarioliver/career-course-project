@@ -148,6 +148,10 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   silently delayed (seen in the real run: audit/notification assigned only partition 0). Fixed with
   `allow.auto.create.topics: false` on audit/notification's consumers — `booking-service` owns the
   topic and consumers wait until it exists.
+- **`KafkaProperties` does not carry a `@ServiceConnection` broker**, same family as the Redis note above: a producer
+  built by hand from `kafkaProperties.buildProducerProperties()` (the DLT one in `KafkaErrorHandlingConfig`) connects to
+  `localhost:9092` and times out in tests. Copy `DefaultKafkaProducerFactory#getConfigurationProperties()` of Boot's own
+  factory instead. Also: `mvn -pl <service> test` needs `-am` (else `slotwise-events` is fetched from Central and fails).
 - Session/terminal history for this project has been lost before mid-session. This file
   plus git commits (once initialized) are the durable record — prefer committing working
   states over relying on conversation recovery.
