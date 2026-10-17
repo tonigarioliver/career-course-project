@@ -135,6 +135,16 @@ sequenceDiagram
     Note over K,N: a record that keeps failing goes to<br/>reservation-events.DLT after its retries
 ```
 
+## In action
+
+A reservation followed through three services (OpenTelemetry trace in Grafana Tempo), and a dashboard built from the logs:
+
+![Trace of one reservation across booking, audit and notification](docs-site/docs/assets/tempo-trace.png)
+
+![Grafana dashboard with reservations, conflicts and notifications](docs-site/docs/assets/grafana-dashboard.png)
+
+More screenshots, the demo traffic and the tests in the [docs site](https://tonigarioliver.github.io/slotwise/showcase/).
+
 ## Run locally
 ```bash
 docker compose up -d      # Postgres (+replica), Redis, Kafka, Keycloak (realm auto-imported), OTel Collector, Grafana (:3000)
