@@ -34,9 +34,6 @@ spring:
         # were silently delayed. booking-service owns the topic; consumers wait until it exists.
         allow.auto.create.topics: false
 
-logging:
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p %-40.40logger{39} : %m%n"
 
 slotwise:
   notification:

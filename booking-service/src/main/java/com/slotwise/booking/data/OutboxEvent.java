@@ -39,8 +39,14 @@ public class OutboxEvent {
     @Nullable
     private Instant publishedAt;
 
-    public OutboxEvent(final String topic, final String messageKey, final String payload) {
+    // W3C traceparent of the request that created the row; see V4__outbox_trace_context.sql.
+    @Nullable
+    private String traceContext;
+
+    public OutboxEvent(
+            final String topic, final String messageKey, final String payload, final @Nullable String traceContext) {
         this.topic = topic;
+        this.traceContext = traceContext;
         this.messageKey = messageKey;
         this.payload = payload;
         this.createdAt = Instant.now();

@@ -40,6 +40,7 @@ public class ReservationWriteService {
     private final ConversionService conversionService;
     private final ReservationProperties reservationProperties;
     private final OutboxEventRepository outboxEventRepository;
+    private final OutboxTraceContext outboxTraceContext;
     private final JsonMapper jsonMapper;
 
     @Transactional
@@ -86,7 +87,8 @@ public class ReservationWriteService {
         final ReservationCreatedEvent event = new ReservationCreatedEvent(
                 saved.id(), request.resourceId(), request.ownerSubject(), request.startTime(), request.endTime());
         this.outboxEventRepository.save(new OutboxEvent(
-                ReservationCreatedEvent.TOPIC, request.resourceId().toString(), this.jsonMapper.writeValueAsString(event)));
+                ReservationCreatedEvent.TOPIC, request.resourceId().toString(), this.jsonMapper.writeValueAsString(event),
+                this.outboxTraceContext.capture()));
         log.info("Created reservation {} for resource {} owner {} ({} - {})",
                 saved.id(), request.resourceId(), request.ownerSubject(), request.startTime(), request.endTime());
         return saved;

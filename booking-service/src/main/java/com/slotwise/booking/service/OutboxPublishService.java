@@ -23,6 +23,7 @@ public class OutboxPublishService {
     private final OutboxEventRepository outboxEventRepository;
     private final KafkaTemplate<String, ReservationCreatedEvent> kafkaTemplate;
     private final JsonMapper jsonMapper;
+    private final OutboxTraceContext outboxTraceContext;
 
     // Locks the next unpublished row (FOR UPDATE SKIP LOCKED), sends it, waits for the broker ack and
     // marks it published. Returns false when nothing was left. The lock must be held across the send,
@@ -36,7 +37,8 @@ public class OutboxPublishService {
     private OutboxEvent publish(final OutboxEvent outboxEvent) {
         final ReservationCreatedEvent event =
                 this.jsonMapper.readValue(outboxEvent.getPayload(), ReservationCreatedEvent.class);
-        try {
+        // The send's own span (KafkaTemplate observation) becomes a child of the original request's trace.
+        try (var ignored = this.outboxTraceContext.continueTrace(outboxEvent.getTraceContext())) {
             this.kafkaTemplate.send(outboxEvent.getTopic(), outboxEvent.getMessageKey(), event).get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

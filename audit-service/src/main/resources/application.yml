@@ -41,6 +41,3 @@ spring:
   flyway:
     enabled: true
 
-logging:
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p %-40.40logger{39} : %m%n"

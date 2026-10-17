@@ -8,7 +8,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -24,6 +27,7 @@ import com.slotwise.booking.model.CreateReservationRequest;
 import com.slotwise.booking.model.CreateResourceRequest;
 import com.slotwise.booking.model.ReservationDto;
 import com.slotwise.booking.model.ResourceDto;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
@@ -75,17 +79,33 @@ class ReservationServiceIntegrationTest {
     @TestConfiguration
     static class CapturingListenerConfig {
         @Bean
-        CapturingListener capturingListener() {
-            return new CapturingListener();
+        CapturingListener capturingListener(final Tracer tracer) {
+            return new CapturingListener(tracer);
         }
     }
 
     static class CapturingListener {
         final BlockingQueue<ReservationCreatedEvent> received = new LinkedBlockingQueue<>();
 
+        // reservationId -> traceId the consumer was running in / the one in the message's traceparent header.
+        final Map<Long, String> consumerTraceIds = new ConcurrentHashMap<>();
+        final Map<Long, String> headerTraceIds = new ConcurrentHashMap<>();
+
+        private final Tracer tracer;
+
+        CapturingListener(final Tracer tracer) {
+            this.tracer = tracer;
+        }
+
         @KafkaListener(topics = ReservationCreatedEvent.TOPIC, groupId = "test-consumer")
-        void onReservationCreated(final ReservationCreatedEvent event) {
-            this.received.add(event);
+        void onReservationCreated(final ConsumerRecord<String, ReservationCreatedEvent> record) {
+            this.received.add(record.value());
+            final var span = this.tracer.currentSpan();
+            this.consumerTraceIds.put(record.value().reservationId(), span == null ? "" : span.context().traceId());
+            final var header = record.headers().lastHeader("traceparent");
+            // traceparent = version-traceId-spanId-flags
+            this.headerTraceIds.put(record.value().reservationId(),
+                    header == null ? "" : new String(header.value()).split("-")[1]);
         }
     }
 
@@ -129,11 +149,13 @@ class ReservationServiceIntegrationTest {
     private final OutboxEventRepository outboxEventRepository;
     private final ProcessedEvents processedEvents;
     private final JdbcClient jdbcClient;
+    private final Tracer tracer;
 
     @Autowired
     ReservationServiceIntegrationTest(
             ResourceService resourceService, ReservationService reservationService, ReservationWriteService reservationWriteService, CapturingListener capturingListener,
-            OutboxEventRepository outboxEventRepository, ProcessedEvents processedEvents, JdbcClient jdbcClient) {
+            OutboxEventRepository outboxEventRepository, ProcessedEvents processedEvents, JdbcClient jdbcClient, Tracer tracer) {
+        this.tracer = tracer;
         this.processedEvents = processedEvents;
         this.jdbcClient = jdbcClient;
         this.outboxEventRepository = outboxEventRepository;
@@ -141,6 +163,32 @@ class ReservationServiceIntegrationTest {
         this.reservationService = reservationService;
         this.reservationWriteService = reservationWriteService;
         this.capturingListener = capturingListener;
+    }
+
+    // The request's trace must survive the outbox: the relay publishes from another thread long after the request,
+    // yet the Kafka message carries the request's traceId and the consumer runs inside that same trace.
+    @Test
+    void create_continuesTheRequestTraceThroughOutboxAndKafka() {
+        final ResourceDto resource = this.resourceService.create(
+                CreateResourceRequest.builder().name("Room Trace").build());
+        final Span request = this.tracer.nextSpan().name("test request").start();
+        final ReservationDto reservation;
+        try (var ignored = this.tracer.withSpan(request)) {
+            reservation = this.reservationService.create(ADMIN, CreateReservationRequest.builder()
+                    .resourceId(resource.id())
+                    .startTime(Instant.parse("2026-02-02T10:00:00Z"))
+                    .endTime(Instant.parse("2026-02-02T11:00:00Z"))
+                    .ownerSubject("user-trace")
+                    .build());
+        } finally {
+            request.end();
+        }
+
+        final String traceId = request.context().traceId();
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
+            assertThat(this.capturingListener.headerTraceIds.get(reservation.id())).isEqualTo(traceId);
+            assertThat(this.capturingListener.consumerTraceIds.get(reservation.id())).isEqualTo(traceId);
+        });
     }
 
     @Test

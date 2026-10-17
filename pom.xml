@@ -15,6 +15,7 @@
     <modules>
         <module>slotwise-events</module>
         <module>slotwise-kafka-support</module>
+        <module>slotwise-observability</module>
         <module>booking-service</module>
         <module>audit-service</module>
         <module>notification-service</module>

@@ -1429,3 +1429,32 @@ checks the original bytes and the `kafka_dlt-original-topic` header; the full su
 Found on the way: the first cut built the DLT producer from `KafkaProperties.buildProducerProperties()`, which
 connected to `localhost:9092` (a `@ServiceConnection` broker is not in `KafkaProperties`) — every test timed out.
 It now copies the config of Boot's own `DefaultKafkaProducerFactory`, which does carry it.
+
+## Tracing: OpenTelemetry through Micrometer Tracing (Fase 4)
+
+The prediction in "MDC is thread-local" came true once there were three services: `CorrelationIdFilter` only
+covered one HTTP request in `booking-service`. It is **deleted, not kept alongside** (two IDs per log line is noise);
+the `X-Correlation-Id` response header went with it. Now every log line carries `traceId`/`spanId`, taken from the
+current span by the OpenTelemetry bridge, and the trace crosses HTTP and Kafka (producer/listener observation writes
+and reads the `traceparent` header).
+
+- **One module, `slotwise-observability`**: the tracing dependencies, plus default properties (sampling 1.0, Kafka
+  observation on, ECS JSON logs) injected by an `EnvironmentPostProcessor` as the *lowest-priority* property source, so
+  any service's `application.yml`/env var/command line wins. Not `@PropertySource`/yml: the logging system reads
+  `logging.structured.*` before the application context exists, so only an early hook works.
+- **OTel SDK, no exporter.** `spring-boot-micrometer-tracing-opentelemetry` alone fails to start (no `OpenTelemetry`
+  bean): `spring-boot-opentelemetry` (API + SDK) is needed; and the MVC observation autoconfiguration needs
+  `spring-boot-micrometer-metrics`. `spring-boot-starter-opentelemetry` would also pull OTLP exporters pointing at a
+  collector that does not exist here. Spans are created and propagated but not shipped anywhere.
+- **The outbox breaks the trace on its own**: `OutboxRelay` publishes from another thread, after the request ended, so
+  there is no current span to propagate. `outbox_event.trace_context` (V4) stores the request's `traceparent` and
+  `OutboxTraceContext` re-opens it around the Kafka send, so the send, and every consumer after it, stay in the request's
+  trace. Test: `create_continuesTheRequestTraceThroughOutboxAndKafka` (traceId in the message header and in the
+  consumer's span equal the request's).
+- **ECS** instead of a text pattern: JSON, one object per line, so a log platform filters by `traceId` without parsing.
+  Less readable in a dev terminal; a service can override `logging.structured.format.console` (or use a profile).
+
+**Deliberately not done**: an exporter/collector (Zipkin, Tempo or an OTel Collector) to *see* the trace — the next
+step; `span.error(e)` on a failed outbox send (marked `shortcut:` in the code); lowering the sampling for real traffic;
+a manual `Observation` around the notification worker's send.
+

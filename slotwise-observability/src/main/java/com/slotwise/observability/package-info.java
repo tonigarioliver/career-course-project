@@ -1,4 +1,4 @@
 @NullMarked
-package com.slotwise.booking.logging;
+package com.slotwise.observability;
 
 import org.jspecify.annotations.NullMarked;
