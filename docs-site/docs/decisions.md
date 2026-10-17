@@ -21,7 +21,7 @@ measured the query the app already runs on every reservation create,
 docker compose up -d postgres
 mvn -pl booking-service spring-boot:run   # once, so Hibernate (ddl-auto=update) creates
                                            # the schema — then Ctrl-C it, don't need the app up
-docker exec -i career-course-project-postgres-1 psql -U slotwise -d slotwise \
+docker exec -i slotwise-postgres-1 psql -U slotwise -d slotwise \
     < scripts/seed-fase2-data.sql
 ```
 

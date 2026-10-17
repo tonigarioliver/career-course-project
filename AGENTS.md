@@ -1,4 +1,4 @@
-# Slotwise — career-course-project
+# Slotwise
 
 Booking/reservations platform used as a course project across a backend learning
 roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → Docker → K8s).

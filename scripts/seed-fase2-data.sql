@@ -13,7 +13,7 @@
 --   docker compose up -d postgres
 --   mvn -pl booking-service spring-boot:run   # once, so Flyway (db/migration) creates
 --                                              # the schema — then Ctrl-C it
---   docker exec -i career-course-project-postgres-1 psql -U slotwise -d slotwise \
+--   docker exec -i slotwise-postgres-1 psql -U slotwise -d slotwise \
 --       < scripts/seed-fase2-data.sql
 --
 -- Idempotency: none — re-running adds another batch on top. Reset first with:

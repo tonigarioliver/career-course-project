@@ -2,7 +2,7 @@
 icon: lucide/rocket
 ---
 
-# Slotwise — Career Course Project
+# Slotwise
 
 Booking/reservations platform used as the hands-on companion to a backend-senior
 roadmap: Spring Boot avanzado → PostgreSQL internals → Redis → Kafka → Docker →
