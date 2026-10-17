@@ -21,6 +21,6 @@ public record ReservationCreatedEvent(
 
     public static final String TOPIC = "reservation-events";
 
-    // Where a consumer parks a record it gave up on (see each service's KafkaErrorHandlingConfig).
+    // Where a consumer parks a record it gave up on (see slotwise-kafka-support).
     public static final String DLT_TOPIC = TOPIC + ".DLT";
 }

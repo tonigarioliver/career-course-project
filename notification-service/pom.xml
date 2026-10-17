@@ -22,6 +22,11 @@
             <artifactId>slotwise-events</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.slotwise</groupId>
+            <artifactId>slotwise-kafka-support</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- RestClient + declarative @HttpExchange client for Keycloak. No web *server*: this service has
              no HTTP API (spring.main.web-application-type: none). -->
         <dependency>

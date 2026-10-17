@@ -1394,8 +1394,8 @@ writer's configuration (reflection on library internals, brittle but it document
 ## Dead-letter topic (Fase 4)
 
 Until now none of the three consumers had an error handler, so Spring Kafka's default applied: retry the
-failing record 9 times back to back, log it, **commit the offset** — the event was gone. Now each service has a
-`KafkaErrorHandlingConfig` with a `DefaultErrorHandler`: 4 retries with exponential backoff (1s, 2s, 4s, 8s), then a
+failing record 9 times back to back, log it, **commit the offset** — the event was gone. Now the
+`slotwise-kafka-support` module has a `DefaultErrorHandler`: by default 4 retries with exponential backoff (1s, 2s, 4s, 8s), then a
 `DeadLetterPublishingRecoverer` publishes the record to `reservation-events.DLT`
 (`ReservationCreatedEvent.DLT_TOPIC`) and the consumer moves on. The record keeps its key and carries
 `kafka_dlt-original-topic/partition/offset` and the exception as headers, so it can be inspected and replayed.
@@ -1408,13 +1408,24 @@ DLT directly.
 - **Partition `-1`.** The default keeps the source partition; if the DLT had fewer partitions than the source it
   would fail to publish. `booking-service` owns and declares the DLT (3 partitions, like the source topic), and the
   recoverer lets the producer pick the partition anyway, so a DLT auto-created with 1 partition still works.
-- **Duplicated per service**, like the rest of the Kafka config: `slotwise-events` is a plain jar with no Spring.
+- **One shared module, as an auto-configuration.** First cut was a copy per service (identical but for the
+  `package`; `slotwise-events` is a plain jar and must stay without Spring). Now `slotwise-kafka-support` holds
+  `KafkaErrorHandlingAutoConfiguration`, registered in
+  `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`: adding the dependency to a
+  service's pom is the whole activation — no `@Import` anywhere, which also means nothing in the service says it is
+  there (`--debug` prints the conditions report). It is `@ConditionalOnMissingBean(CommonErrorHandler)`, so a service
+  can replace it with its own handler; deliberately no on/off property — a service that doesn't want it doesn't
+  add the module.
+- **Retries are properties** (`KafkaRetryProperties`, `slotwise.kafka.retry.max-attempts|initial-interval|multiplier`,
+  defaults 4 / 1s / 2.0), so a test can retry fast. `KafkaErrorHandlingAutoConfigurationTest` (in the module, Kafka
+  Testcontainer only) uses 2 / 50ms with a listener that always throws: 3 deliveries, then the record is on the DLT.
+  It imports nothing, so it also proves the `.imports` file activates the handler.
 
 **Deliberately not done**: a consumer/replay tool for the DLT (inspect it with `kafka-console-consumer`); alerting on
-DLT growth; a test of a *retryable* failure (it would wait the full backoff); a DLT per consumer group — all three
+DLT growth; a DLT per consumer group — all three
 services share one topic and tell themselves apart by the `kafka_dlt-original-consumer-group` header.
 **Verified** with Testcontainers: `poisonMessage_doesNotBlockLaterEvents` (audit-service) now also reads the DLT and
-checks the original bytes and the `kafka_dlt-original-topic` header; the full suites of the three services pass.
+checks the original bytes and the `kafka_dlt-original-topic` header; the full suites of all modules pass.
 Found on the way: the first cut built the DLT producer from `KafkaProperties.buildProducerProperties()`, which
 connected to `localhost:9092` (a `@ServiceConnection` broker is not in `KafkaProperties`) — every test timed out.
 It now copies the config of Boot's own `DefaultKafkaProducerFactory`, which does carry it.

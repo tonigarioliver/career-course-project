@@ -8,7 +8,9 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
 - Multi-module Maven build: root `pom.xml` (packaging `pom`) imports
   `spring-boot-dependencies:4.0.1` as a BOM in `dependencyManagement` — it does
   **not** extend `spring-boot-starter-parent`. Modules: `slotwise-events` (plain jar — the
-  Kafka wire contract, `ReservationCreatedEvent` + topic name, shared by every service),
+  Kafka wire contract, `ReservationCreatedEvent` + topic names, shared by every service),
+  `slotwise-kafka-support` (auto-configuration: consumer retries + dead-letter topic; a service just depends on it,
+  retries via `slotwise.kafka.retry.*`),
   `booking-service`, and `audit-service` (port 8082: consumes `reservation-events` into its
   own `slotwise_audit` database, admin-only `GET /api/audit-events`), and `notification-service`
   (no HTTP API, so no port: consumes `reservation-events` into an inbox table; a worker resolves the
@@ -149,7 +151,7 @@ roadmap (Spring Boot advanced → PostgreSQL internals → Redis → Kafka → D
   `allow.auto.create.topics: false` on audit/notification's consumers — `booking-service` owns the
   topic and consumers wait until it exists.
 - **`KafkaProperties` does not carry a `@ServiceConnection` broker**, same family as the Redis note above: a producer
-  built by hand from `kafkaProperties.buildProducerProperties()` (the DLT one in `KafkaErrorHandlingConfig`) connects to
+  built by hand from `kafkaProperties.buildProducerProperties()` (the DLT one in `KafkaErrorHandlingAutoConfiguration`) connects to
   `localhost:9092` and times out in tests. Copy `DefaultKafkaProducerFactory#getConfigurationProperties()` of Boot's own
   factory instead. Also: `mvn -pl <service> test` needs `-am` (else `slotwise-events` is fetched from Central and fails).
 - Session/terminal history for this project has been lost before mid-session. This file

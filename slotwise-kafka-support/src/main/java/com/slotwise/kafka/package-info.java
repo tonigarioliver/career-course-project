@@ -1,4 +1,4 @@
 @NullMarked
-package com.slotwise.audit.config;
+package com.slotwise.kafka;
 
 import org.jspecify.annotations.NullMarked;
